@@ -1,0 +1,136 @@
+.dashboard-page {
+  background: var(--color-gray-50);
+  min-height: 100vh;
+}
+
+.dashboard-page .container {
+  padding-top: var(--space-10);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-10);
+  flex-wrap: wrap;
+}
+.dashboard-greeting {
+  font-size: var(--font-size-base);
+  color: var(--color-gray-500);
+  font-weight: var(--font-medium);
+  margin-bottom: 2px;
+}
+.dashboard-name {
+  font-size: var(--font-size-4xl);
+  font-weight: 900;
+  color: var(--color-gray-900);
+  line-height: 1.1;
+  margin-bottom: 6px;
+}
+.dashboard-sub { color: var(--color-gray-500); font-size: var(--font-size-sm); }
+.dashboard-header-actions { display: flex; gap: var(--space-3); align-items: center; flex-shrink: 0; flex-wrap: wrap; }
+
+/* ── Section ─────────────────────────────────────────────────────────── */
+.dashboard-section { margin-bottom: var(--space-10); }
+.section-heading {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-gray-800);
+  margin-bottom: var(--space-4);
+}
+
+/* ── Stats Grid ─────────────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+.stat-card {
+  background: var(--color-white);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-gray-100);
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+.stat-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+.stat-card-icon {
+  width: 48px; height: 48px;
+  border-radius: var(--radius-lg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.stat-card-value {
+  font-size: var(--font-size-3xl);
+  font-weight: 900;
+  color: var(--color-gray-900);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.stat-card-label { font-size: var(--font-size-xs); color: var(--color-gray-500); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* ── Action Cards Grid ──────────────────────────────────────────────── */
+.actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+.action-card {
+  background: var(--color-white);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  box-shadow: var(--shadow-card);
+  border: 1.5px solid var(--color-gray-100);
+  text-decoration: none;
+  transition: all var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+.action-card::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--card-accent, var(--color-primary));
+  border-radius: 2px 0 0 2px;
+}
+.action-card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-3px);
+  border-color: var(--color-gray-200);
+}
+.action-icon {
+  width: 44px; height: 44px;
+  border-radius: var(--radius-lg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.action-title {
+  font-weight: var(--font-semibold);
+  color: var(--color-gray-900);
+  font-size: var(--font-size-base);
+  margin-bottom: 2px;
+}
+.action-subtitle { font-size: var(--font-size-xs); color: var(--color-gray-500); line-height: 1.4; }
+.action-arrow {
+  margin-left: auto;
+  color: var(--color-gray-300);
+  font-size: 18px;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast), color var(--transition-fast);
+}
+.action-card:hover .action-arrow { transform: translateX(4px); color: var(--card-accent, var(--color-primary)); }
+
+@media (max-width: 640px) {
+  .dashboard-name { font-size: var(--font-size-3xl); }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
