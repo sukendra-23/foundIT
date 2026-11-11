@@ -99,7 +99,32 @@ export const ensureTables = async () => {
         `);
 
         console.log('✅ Phase 7 tables ready (USER_NOTIFICATIONS, CLAIM_CONVERSATIONS, CLAIM_MESSAGES, MESSAGE_REPORTS).');
+
+        // 5. Verify Phase 7 Recovery Workflow tables exist (does NOT create them; requires migration 08)
+        console.log('🔍 Verifying Phase 7 Recovery Workflow schema...');
+        const recoveryTables = [
+            'RECOVERY_SUBMISSIONS',
+            'RECOVERY_IMAGES',
+            'RECOVERY_AUDIT_LOGS',
+            'RECOVERY_CONVERSATIONS',
+            'RECOVERY_MESSAGES',
+            'RECOVERY_MESSAGE_REPORTS'
+        ];
+        const [existingRecTables] = await pool.query(
+            `SELECT TABLE_NAME FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)`,
+            [recoveryTables]
+        );
+        const existingNames = new Set(existingRecTables.map(r => r.TABLE_NAME));
+        const missing = recoveryTables.filter(t => !existingNames.has(t));
+
+        if (missing.length > 0) {
+            console.error(`\n❌ [ensureTables] Phase 7 Recovery Workflow tables missing: ${missing.join(', ')}`);
+            console.error('👉 Please run the authoritative migration: node migrations/08_phase7_recovery_workflow.js\n');
+            process.exit(1);
+        }
+        console.log('✅ Phase 7 Recovery Workflow tables verified and active.');
     } catch (error) {
-        console.error('⚠️ [ensureTables] Error during table bootstrap:', error.message);
+        console.error('⚠️ [ensureTables] Error during table bootstrap / verification:', error.message);
     }
 };

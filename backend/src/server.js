@@ -16,6 +16,8 @@ import claimRoutes from './routes/claimRoutes.js';
 import adminClaimRoutes from './routes/adminClaimRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import recoveryRoutes from './routes/recoveryRoutes.js';
+import adminRecoveryRoutes from './routes/adminRecoveryRoutes.js';
 import { getPublicStats } from './controllers/dashboardController.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { ensureTables } from './config/ensureTables.js';
@@ -45,6 +47,8 @@ app.use('/api/claims', claimRoutes);
 app.use('/api/admin/claims', adminClaimRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/recoveries', recoveryRoutes);
+app.use('/api/admin/recoveries', adminRecoveryRoutes);
 
 // Public platform stats (for Home page hero)
 app.get('/api/stats', getPublicStats);

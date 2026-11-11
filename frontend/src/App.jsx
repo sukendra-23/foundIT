@@ -25,6 +25,8 @@ import MyClaims from './pages/MyClaims';
 import ClaimDetails from './pages/ClaimDetails';
 import AdminClaims from './pages/AdminClaims';
 import Messages from './pages/Messages';
+import MyRecoveries from './pages/MyRecoveries';
+import RecoveryDetails from './pages/RecoveryDetails';
 
 // ── Route Guards ──────────────────────────────────────────────────────
 
@@ -78,6 +80,8 @@ const AppRoutes = () => (
     <Route path="/claims"      element={<ProtectedRoute><MyClaims /></ProtectedRoute>} />
     <Route path="/claims/:id"  element={<ProtectedRoute><ClaimDetails /></ProtectedRoute>} />
     <Route path="/messages"    element={<ProtectedRoute><Messages /></ProtectedRoute>} />
+    <Route path="/my-recoveries" element={<ProtectedRoute><MyRecoveries /></ProtectedRoute>} />
+    <Route path="/recoveries/:id" element={<ProtectedRoute><RecoveryDetails /></ProtectedRoute>} />
     <Route path="/profile"     element={<ProtectedRoute><PlaceholderPage title="Profile" /></ProtectedRoute>} />
 
     {/* Admin */}

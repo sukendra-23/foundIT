@@ -170,6 +170,7 @@ const Navbar = () => {
                         <Link to="/my-reports" className="dropdown-item" onClick={() => setDropdownOpen(false)}>📋 My Reports</Link>
                         <Link to="/matches" className="dropdown-item" onClick={() => setDropdownOpen(false)}>✨ My Matches</Link>
                         <Link to="/claims" className="dropdown-item" onClick={() => setDropdownOpen(false)}>🏷️ My Claims</Link>
+                        <Link to="/my-recoveries" className="dropdown-item" onClick={() => setDropdownOpen(false)}>🎁 My Recoveries</Link>
                         <Link to="/messages" className="dropdown-item" onClick={() => setDropdownOpen(false)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span>💬 Messages</span>
                           {unreadCount > 0 && (
@@ -228,6 +229,7 @@ const Navbar = () => {
               <Link to="/my-reports" className="mobile-link" onClick={() => setMobileOpen(false)}>My Reports</Link>
               <Link to="/matches" className="mobile-link" onClick={() => setMobileOpen(false)}>My Matches</Link>
               <Link to="/claims" className="mobile-link" onClick={() => setMobileOpen(false)}>My Claims</Link>
+              <Link to="/my-recoveries" className="mobile-link" onClick={() => setMobileOpen(false)}>My Recoveries</Link>
               <Link to="/messages" className="mobile-link" onClick={() => setMobileOpen(false)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Messages</span>
                 {unreadCount > 0 && (

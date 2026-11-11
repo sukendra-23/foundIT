@@ -5,6 +5,17 @@ import { useAuth } from '../hooks/useAuth';
 import Navbar from '../components/layout/Navbar';
 import Footer from '../components/layout/Footer';
 import './Home.css';
+import '../components/home/HomeSections.css';
+
+// Premium Startup Homepage Components
+import InteractiveRecovery3D from '../components/home/InteractiveRecovery3D';
+import RecoveryJourneys from '../components/home/RecoveryJourneys';
+import FeatureShowcase from '../components/home/FeatureShowcase';
+import TrustAndSafety from '../components/home/TrustAndSafety';
+import RealWorldScenarios from '../components/home/RealWorldScenarios';
+import FoundiTJournal from '../components/home/FoundiTJournal';
+import FAQSection from '../components/home/FAQSection';
+import FinalCTA from '../components/home/FinalCTA';
 
 const HowItWorksStep = ({ step, icon, title, description, delay }) => (
   <div className={`how-step anim-fade-in-up anim-delay-${delay}`}>
@@ -136,27 +147,29 @@ const Home = () => {
         </div>
       </section>
 
-      {/* ── CTA BANNER ───────────────────────────────────────────── */}
-      <section className="cta-banner">
-        <div className="container">
-          <div className="cta-banner-inner">
-            <div>
-              <h2 className="cta-banner-title">Ready to find your lost item?</h2>
-              <p className="cta-banner-sub">Join the community. Report, discover, and recover.</p>
-            </div>
-            <div className="cta-banner-buttons">
-              {isAuthenticated ? (
-                <Link to="/dashboard" className="cta-banner-btn-primary">Go to Dashboard →</Link>
-              ) : (
-                <>
-                  <Link to="/register" className="cta-banner-btn-primary">Create Account</Link>
-                  <Link to="/login" className="cta-banner-btn-ghost">Log In</Link>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* ── SECTION 1: INTERACTIVE 3D PRODUCT DEMO ─────────────────── */}
+      <InteractiveRecovery3D />
+
+      {/* ── SECTION 2: TWO JOURNEYS, ONE PLATFORM ───────────────────── */}
+      <RecoveryJourneys />
+
+      {/* ── SECTION 3: MORE THAN A LOST & FOUND WEBSITE ─────────────── */}
+      <FeatureShowcase />
+
+      {/* ── SECTION 4: BUILT AROUND TRUST AND SAFETY ────────────────── */}
+      <TrustAndSafety />
+
+      {/* ── SECTION 5: REAL-WORLD SITUATIONS WHERE FOUNDIT HELPS ────── */}
+      <RealWorldScenarios />
+
+      {/* ── SECTION 6: THE FOUNDIT JOURNAL ──────────────────────────── */}
+      <FoundiTJournal />
+
+      {/* ── SECTION 7: FREQUENTLY ASKED QUESTIONS ───────────────────── */}
+      <FAQSection />
+
+      {/* ── SECTION 8: FINAL CALL TO ACTION ─────────────────────────── */}
+      <FinalCTA />
 
       <Footer />
     </div>

@@ -8,7 +8,9 @@ import EmptyState from '../components/common/EmptyState';
 import { Skeleton } from '../components/common/Loader';
 import { useToast } from '../components/common/Toast';
 import { adminClaimApi } from '../services/claimApi';
+import { adminRecoveryApi } from '../services/recoveryApi';
 import { formatDate } from '../utils/formatters';
+import RecoveryReviewModal from '../components/admin/RecoveryReviewModal';
 
 const AdminClaims = () => {
   const toast = useToast();
@@ -35,13 +37,28 @@ const AdminClaims = () => {
   const [submittingDecision, setSubmittingDecision] = useState(false);
 
   // Tab & Moderation State (Feature F: Abuse Handling & Moderation)
-  const [activeTab, setActiveTab] = useState('CLAIMS'); // 'CLAIMS' | 'MODERATION'
+  const [activeTab, setActiveTab] = useState('CLAIMS'); // 'CLAIMS' | 'RECOVERIES' | 'MODERATION'
   const [reports, setReports] = useState([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
   const [reportAction, setReportAction] = useState('ACTION_TAKEN');
   const [reportAdminNotes, setReportAdminNotes] = useState('');
   const [submittingReportReview, setSubmittingReportReview] = useState(false);
+
+  // Recovery admin state
+  const [recoveries, setRecoveries] = useState([]);
+  const [loadingRecoveries, setLoadingRecoveries] = useState(false);
+  const [recoveryStatusFilter, setRecoveryStatusFilter] = useState('ALL');
+  const [recoverySearch, setRecoverySearch] = useState('');
+  const [selectedRecoveryId, setSelectedRecoveryId] = useState(null);
+  const [recoveryDetailData, setRecoveryDetailData] = useState(null);
+  const [recoveryDetailLoading, setRecoveryDetailLoading] = useState(false);
+  const [recoveryDecision, setRecoveryDecision] = useState('APPROVED');
+  const [recoveryDecisionReason, setRecoveryDecisionReason] = useState('');
+  const [recoveryAdminNotes, setRecoveryAdminNotes] = useState('');
+  const [submittingRecoveryDecision, setSubmittingRecoveryDecision] = useState(false);
+  const [revocationReason, setRevocationReason] = useState('');
+  const [showRevocationForm, setShowRevocationForm] = useState(false);
 
   const fetchClaims = async () => {
     setLoading(true);
@@ -124,6 +141,9 @@ const AdminClaims = () => {
     if (activeTab === 'MODERATION') {
       fetchReports();
     }
+    if (activeTab === 'RECOVERIES') {
+      fetchRecoveries();
+    }
   }, [activeTab]);
 
   const handleReportReviewSubmit = async (e) => {
@@ -141,6 +161,87 @@ const AdminClaims = () => {
       toast(err.response?.data?.message || 'Failed to update report.', 'error');
     } finally {
       setSubmittingReportReview(false);
+    }
+  };
+
+  // ── Recovery admin handlers ───────────────────────────────────────────────
+  const fetchRecoveries = async () => {
+    setLoadingRecoveries(true);
+    try {
+      const res = await adminRecoveryApi.getAll({
+        status: recoveryStatusFilter !== 'ALL' ? recoveryStatusFilter : undefined,
+        search: recoverySearch.trim() || undefined,
+      });
+      const list = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setRecoveries(list);
+    } catch (err) {
+      toast('Failed to load recovery submissions.', 'error');
+    } finally {
+      setLoadingRecoveries(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'RECOVERIES') fetchRecoveries();
+  }, [recoveryStatusFilter]);
+
+  const openRecoveryReviewModal = async (recoveryId) => {
+    setSelectedRecoveryId(recoveryId);
+    setRecoveryDetailLoading(true);
+    setRecoveryDecision('APPROVED');
+    setRecoveryDecisionReason('');
+    setRecoveryAdminNotes('');
+    setShowRevocationForm(false);
+    setRevocationReason('');
+    try {
+      const res = await adminRecoveryApi.getById(recoveryId);
+      const data = res.data?.data || res.data;
+      setRecoveryDetailData(data);
+    } catch (err) {
+      toast('Failed to load recovery details.', 'error');
+      setSelectedRecoveryId(null);
+    } finally {
+      setRecoveryDetailLoading(false);
+    }
+  };
+
+  const handleRecoveryDecisionSubmit = async (e) => {
+    e.preventDefault();
+    if (!recoveryDecisionReason || recoveryDecisionReason.trim().length < 5) {
+      toast('Please provide a decision reason (at least 5 characters).', 'error');
+      return;
+    }
+    setSubmittingRecoveryDecision(true);
+    try {
+      await adminRecoveryApi.decide(selectedRecoveryId, recoveryDecision, recoveryDecisionReason, recoveryAdminNotes);
+      toast(`Recovery submission ${recoveryDecision.toLowerCase()} successfully!`, 'success');
+      setSelectedRecoveryId(null);
+      setRecoveryDetailData(null);
+      fetchRecoveries();
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to submit decision.', 'error');
+    } finally {
+      setSubmittingRecoveryDecision(false);
+    }
+  };
+
+  const handleRecoveryRevoke = async (e) => {
+    e.preventDefault();
+    if (!revocationReason || revocationReason.trim().length < 5) {
+      toast('Please provide a revocation reason (at least 5 characters).', 'error');
+      return;
+    }
+    setSubmittingRecoveryDecision(true);
+    try {
+      await adminRecoveryApi.revoke(selectedRecoveryId, revocationReason, recoveryAdminNotes);
+      toast('Approval revoked successfully.', 'success');
+      setSelectedRecoveryId(null);
+      setRecoveryDetailData(null);
+      fetchRecoveries();
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to revoke approval.', 'error');
+    } finally {
+      setSubmittingRecoveryDecision(false);
     }
   };
 
@@ -179,6 +280,24 @@ const AdminClaims = () => {
               }}
             >
               🛡️ Ownership Claims ({claims.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('RECOVERIES')}
+              style={{
+                padding: '9px 18px',
+                borderRadius: 'var(--radius-lg)',
+                border: 'none',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                background: activeTab === 'RECOVERIES' ? '#059669' : '#fff',
+                color: activeTab === 'RECOVERIES' ? '#fff' : 'var(--color-gray-700)',
+                boxShadow: activeTab === 'RECOVERIES' ? '0 4px 12px rgba(5, 150, 105, 0.25)' : 'var(--shadow-xs)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              🎁 Found Item Recoveries ({recoveries.length})
             </button>
             <button
               type="button"
@@ -340,7 +459,174 @@ const AdminClaims = () => {
           </>
         )}
 
-        {/* Tab 2: MODERATION TAB (Feature F: Abuse Handling & Moderation Portal) */}
+        {/* Tab 2: FOUND ITEM RECOVERIES TAB */}
+        {activeTab === 'RECOVERIES' && (
+          <div>
+            {/* Filter and Search Bar */}
+            <div style={{
+              background: '#fff',
+              borderRadius: 'var(--radius-xl)',
+              padding: '16px 20px',
+              border: '1px solid var(--color-gray-200)',
+              boxShadow: 'var(--shadow-sm)',
+              marginBottom: 'var(--space-6)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 14
+            }}>
+              {/* Status buttons */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['ALL', 'PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'].map(st => (
+                  <button
+                    key={st}
+                    onClick={() => setRecoveryStatusFilter(st)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 999,
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      background: recoveryStatusFilter === st ? '#059669' : 'var(--color-gray-100)',
+                      color: recoveryStatusFilter === st ? '#fff' : 'var(--color-gray-700)',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    {st.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search Form */}
+              <form onSubmit={(e) => { e.preventDefault(); fetchRecoveries(); }} style={{ display: 'flex', gap: 8, flex: '1 1 240px', maxWidth: 360 }}>
+                <input
+                  type="text"
+                  placeholder="Search item, finder, or owner..."
+                  value={recoverySearch}
+                  onChange={e => setRecoverySearch(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--color-gray-300)',
+                    fontSize: 13,
+                    outline: 'none'
+                  }}
+                />
+                <Button type="submit" size="sm" style={{ background: '#059669' }}>
+                  Search
+                </Button>
+              </form>
+            </div>
+
+            {/* Recovery Table */}
+            {loadingRecoveries ? (
+              <div style={{ padding: 40, textAlign: 'center' }}>
+                <Skeleton height={200} />
+              </div>
+            ) : recoveries.length === 0 ? (
+              <EmptyState
+                icon="🎁"
+                title="No Recovery Reports"
+                description={recoveryStatusFilter === 'ALL'
+                  ? 'No community recovery reports have been submitted yet.'
+                  : `No recovery reports currently match the filter "${recoveryStatusFilter}".`}
+              />
+            ) : (
+              <div style={{
+                background: '#fff',
+                borderRadius: 'var(--radius-xl)',
+                border: '1px solid var(--color-gray-200)',
+                boxShadow: 'var(--shadow-sm)',
+                overflow: 'hidden'
+              }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-gray-50)', borderBottom: '1px solid var(--color-gray-200)', color: 'var(--color-gray-500)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      <th style={{ padding: '12px 18px' }}>Recovery ID / Lost Item</th>
+                      <th style={{ padding: '12px 18px' }}>Finder's Submission</th>
+                      <th style={{ padding: '12px 18px' }}>Location &amp; Date</th>
+                      <th style={{ padding: '12px 18px' }}>Status</th>
+                      <th style={{ padding: '12px 18px' }}>Submitted</th>
+                      <th style={{ padding: '12px 18px', textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recoveries.map((r) => {
+                      const statusColor = {
+                        PENDING: { bg: '#FEF3C7', color: '#92400E' },
+                        UNDER_REVIEW: { bg: '#DBEAFE', color: '#1E40AF' },
+                        APPROVED: { bg: '#D1FAE5', color: '#065F46' },
+                        REJECTED: { bg: '#FEE2E2', color: '#991B1B' },
+                        CANCELLED: { bg: '#F3F4F6', color: '#374151' },
+                      }[r.status] || { bg: '#F3F4F6', color: '#374151' };
+
+                      return (
+                        <tr key={r.id} style={{ borderBottom: '1px solid var(--color-gray-100)', transition: 'background 0.15s' }}>
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: '#059669', marginBottom: 2 }}>
+                              RECOVERY #{String(r.id).padStart(4, '0')}
+                            </div>
+                            <div style={{ fontWeight: 700, color: 'var(--color-gray-900)' }}>
+                              {r.lostItemTitle || r.lost_title || r.lost_item_title || '—'}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--color-gray-500)' }}>
+                              {r.lost_category || r.lostItemCategory || 'General Item'}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--color-gray-900)' }}>
+                              {r.finderItemName || r.finder_item_name || r.item_name || '—'}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--color-gray-500)' }}>
+                              Finder: <strong>{r.finderName || r.finder_name || '—'}</strong>
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', fontSize: 13 }}>
+                            <div>📍 {[r.foundLocation || r.found_location, r.foundCity || r.city].filter(Boolean).join(', ') || '—'}</div>
+                            <div style={{ fontSize: 12, color: 'var(--color-gray-500)', marginTop: 2 }}>
+                              📅 {(r.foundDate || r.found_date) ? formatDate(r.foundDate || r.found_date) : '—'}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 10px',
+                              borderRadius: 999,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              background: statusColor.bg,
+                              color: statusColor.color
+                            }}>
+                              {r.status}
+                            </span>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', color: 'var(--color-gray-500)', fontSize: 12 }}>
+                            {formatDate(r.createdAt || r.created_at)}
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', textAlign: 'right' }}>
+                            <Button size="sm" style={{ background: '#059669' }} onClick={() => openRecoveryReviewModal(r.id)}>
+                              Review &amp; Decide →
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: MODERATION TAB (Feature F: Abuse Handling & Moderation Portal) */}
         {activeTab === 'MODERATION' && (
           <div>
             {/* Moderation Controls Header */}
@@ -1231,6 +1517,31 @@ const AdminClaims = () => {
           </div>
         </div>
       )}
+
+      {/* ── Recovery Review & Verification Workspace Modal ── */}
+      <RecoveryReviewModal
+        isOpen={Boolean(selectedRecoveryId)}
+        recoveryId={selectedRecoveryId}
+        loading={recoveryDetailLoading}
+        data={recoveryDetailData}
+        onClose={() => {
+          setSelectedRecoveryId(null);
+          setRecoveryDetailData(null);
+        }}
+        decision={recoveryDecision}
+        setDecision={setRecoveryDecision}
+        decisionReason={recoveryDecisionReason}
+        setDecisionReason={setRecoveryDecisionReason}
+        adminNotes={recoveryAdminNotes}
+        setAdminNotes={setRecoveryAdminNotes}
+        submittingDecision={submittingRecoveryDecision}
+        onSubmitDecision={handleRecoveryDecisionSubmit}
+        showRevocationForm={showRevocationForm}
+        setShowRevocationForm={setShowRevocationForm}
+        revocationReason={revocationReason}
+        setRevocationReason={setRevocationReason}
+        onSubmitRevoke={handleRecoveryRevoke}
+      />
 
       {/* Fullscreen / Enlarged Image Preview Modal */}
       {enlargedImage && (

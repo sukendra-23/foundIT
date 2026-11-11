@@ -1,0 +1,690 @@
+/* ═════════════════════════════════════════════════════════════════════════════
+   FoundiT – Premium Startup Product Homepage Stylesheet
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Global Animations ──────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);   }
+}
+
+/* ── Common Section Tokens & Utilities ─────────────────────────────────────── */
+.foundit-section {
+  padding: 100px 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.foundit-section-alt {
+  background: #FFFFFF;
+}
+
+.foundit-section-dark {
+  background: #FFFFFF;
+  color: #0F172A;
+}
+
+.foundit-section-muted {
+  background: #F8FAFC;
+}
+
+.foundit-section-gradient {
+  background: linear-gradient(180deg, #F8FAFC 0%, #EFF6FF 50%, #F8FAFC 100%);
+}
+
+.foundit-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  position: relative;
+  z-index: 2;
+}
+
+/* ── Section Header Typography ─────────────────────────────────────────────── */
+.section-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0F172A;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+.section-badge-dark {
+  background: #F8FAFC;
+  border-color: #E2E8F0;
+  color: #0F172A;
+}
+
+.section-badge-emerald {
+  background: #ECFDF5;
+  border-color: #A7F3D0;
+  color: #059669;
+}
+
+.section-badge-pink {
+  background: #FFF1F2;
+  border-color: #FECDD3;
+  color: #E11D48;
+}
+
+.section-title-large {
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 800;
+  color: #0F172A;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  margin: 0 0 16px 0;
+}
+
+.foundit-section-dark .section-title-large {
+  color: #0F172A;
+}
+
+.section-desc-lead {
+  font-size: clamp(15px, 2vw, 17px);
+  color: #64748B;
+  line-height: 1.7;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.foundit-section-dark .section-desc-lead {
+  color: #64748B;
+}
+
+/* ── SECTION 1: 3D Product Canvas & Side Steps Layout ───────────────────────── */
+.recovery-3d-split-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 390px) 1fr;
+  gap: 28px;
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .recovery-3d-split-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.canvas-wrapper-3d {
+  position: relative;
+  width: 100%;
+  height: 580px;
+  background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+  border-radius: 24px;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  margin-top: 36px;
+}
+
+.canvas-viewport {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  outline: none;
+}
+
+.canvas-viewport:active {
+  cursor: grabbing;
+}
+
+.canvas-floating-controls {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.canvas-stage-stepper {
+  display: flex;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #E2E8F0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 9999px;
+  padding: 4px;
+  gap: 4px;
+  pointer-events: auto;
+  box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.08);
+}
+
+.stage-step-btn {
+  background: transparent;
+  border: none;
+  color: #64748B;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.stage-step-btn:hover {
+  color: #0F172A;
+  background: #F1F5F9;
+}
+
+.stage-step-btn.active {
+  background: #0F172A;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.2);
+}
+
+.canvas-tools-group {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.canvas-icon-btn {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #E2E8F0;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #0F172A;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.canvas-icon-btn:hover {
+  background: #F1F5F9;
+  color: #0F172A;
+  transform: translateY(-1px);
+}
+
+.canvas-inspector-card {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  max-width: 420px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #E2E8F0;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 16px;
+  padding: 20px 22px;
+  color: #0F172A;
+  box-shadow: 0 20px 30px -8px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.canvas-drag-hint {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #E2E8F0;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 11px;
+  color: #64748B;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+/* ── SECTION 2: Two Journeys, One Platform ─────────────────────────────────── */
+.journey-interactive-slide {
+  transition: all 0.3s ease;
+}
+
+@media (max-width: 900px) {
+  .journey-interactive-slide {
+    grid-template-columns: 1fr !important;
+    padding: 24px !important;
+    gap: 24px !important;
+  }
+}
+
+.journey-switcher-wrapper {
+  display: flex;
+  justify-content: center;
+  margin: 32px 0 48px;
+}
+
+.journey-tab-pill {
+  display: flex;
+  background: #E2E8F0;
+  border-radius: 9999px;
+  padding: 5px;
+  gap: 6px;
+}
+
+.journey-tab-btn {
+  padding: 10px 24px;
+  border-radius: 9999px;
+  border: none;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  color: #64748B;
+  background: transparent;
+}
+
+.journey-tab-btn.active-lost {
+  background: #FFFFFF;
+  color: #DC2626;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.15);
+}
+
+.journey-tab-btn.active-found {
+  background: #FFFFFF;
+  color: #059669;
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.15);
+}
+
+.journey-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 992px) {
+  .journey-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.journey-step-box {
+  background: #FFFFFF;
+  border-radius: 20px;
+  padding: 28px 24px;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: all 0.25s ease;
+}
+
+.journey-step-box:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08);
+  border-color: #CBD5E1;
+}
+
+.journey-step-num-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+/* ── SECTION 3: Feature Showcase (Editorial Layout) ────────────────────────── */
+.feature-editorial-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  align-items: center;
+  margin-bottom: 80px;
+}
+
+.feature-editorial-row:last-child {
+  margin-bottom: 0;
+}
+
+.feature-editorial-row.reverse {
+  direction: rtl;
+}
+
+.feature-editorial-row.reverse > * {
+  direction: ltr;
+}
+
+@media (max-width: 868px) {
+  .feature-editorial-row,
+  .feature-editorial-row.reverse {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    direction: ltr;
+  }
+}
+
+.feature-preview-mockup {
+  background: linear-gradient(135deg, #FFFFFF 0%, #F1F5F9 100%);
+  border: 1px solid #E2E8F0;
+  border-radius: 24px;
+  padding: 32px;
+  box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.07);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.3s ease;
+}
+
+.feature-preview-mockup:hover {
+  transform: translateY(-3px);
+}
+
+/* ── SECTION 4: Built Around Trust and Safety ──────────────────────────────── */
+.trust-shield-hero-box {
+  background: #FFFFFF;
+  border-radius: 28px;
+  border: 1px solid #E2E8F0;
+  padding: 48px 40px;
+  color: #0F172A;
+  margin-bottom: 40px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.05);
+}
+
+.trust-steps-timeline {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin: 32px 0;
+  position: relative;
+}
+
+@media (max-width: 900px) {
+  .trust-stepper-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .trust-diagnostic-grid {
+    grid-template-columns: 1fr !important;
+    gap: 20px !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .trust-stepper-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .trust-steps-timeline {
+    grid-template-columns: 1fr;
+  }
+}
+
+.trust-step-node {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  padding: 20px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.trust-step-node:hover {
+  background: #FFFFFF;
+  box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.06);
+  border-color: #CBD5E1;
+}
+
+/* ── SECTION 5: Real-World Scenarios ───────────────────────────────────────── */
+.scenario-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 28px;
+  margin-top: 40px;
+}
+
+@media (max-width: 868px) {
+  .scenario-card-grid {
+    grid-template-columns: 1fr;
+  }
+  .scenario-comparison-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .scenario-milestone-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .scenario-stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+@media (max-width: 540px) {
+  .scenario-milestone-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .scenario-stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.scenario-card {
+  background: #FFFFFF;
+  border-radius: 24px;
+  border: 1px solid #E2E8F0;
+  padding: 32px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  transition: all 0.25s ease;
+}
+
+.scenario-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08);
+  border-color: #CBD5E1;
+}
+
+/* ── SECTION 6: The FoundiT Journal ────────────────────────────────────────── */
+.journal-articles-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  margin-top: 40px;
+}
+
+@media (max-width: 1024px) {
+  .journal-articles-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .journal-articles-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.journal-card {
+  background: #FFFFFF;
+  border-radius: 20px;
+  border: 1px solid #E2E8F0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04);
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+
+.journal-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08);
+  border-color: #CBD5E1;
+}
+
+.journal-cover {
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 54px;
+  position: relative;
+  overflow: hidden;
+}
+
+.journal-card-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* ── SECTION 7: FAQ Accordion ──────────────────────────────────────────────── */
+.faq-accordion-list {
+  max-width: 860px;
+  margin: 40px auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.faq-item {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.faq-item:hover {
+  border-color: #CBD5E1;
+}
+
+.faq-item.open {
+  border-color: #93C5FD;
+  box-shadow: 0 10px 15px -3px rgba(67, 97, 238, 0.06);
+}
+
+.faq-trigger {
+  width: 100%;
+  padding: 20px 24px;
+  background: transparent;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1E293B;
+  gap: 16px;
+}
+
+.faq-trigger:hover {
+  color: #4361EE;
+}
+
+.faq-icon-pill {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #F1F5F9;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.faq-item.open .faq-icon-pill {
+  background: #EEF2FF;
+  color: #4361EE;
+  transform: rotate(45deg);
+}
+
+.faq-content {
+  padding: 0 24px 22px 24px;
+  font-size: 14.5px;
+  color: #475569;
+  line-height: 1.7;
+}
+
+/* ── SECTION 8: Final Call to Action ───────────────────────────────────────── */
+/* Note: FinalCTA.jsx uses inline styles for the card, these button classes
+   are kept for backward-compatibility if referenced elsewhere. */
+.final-cta-box {
+  background: #FFFFFF;
+  border-radius: 32px;
+  padding: 64px 40px;
+  text-align: center;
+  color: #0F172A;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.06);
+  border: 1px solid #E2E8F0;
+}
+
+.final-cta-btn-lost {
+  padding: 14px 28px;
+  background: #0F172A;
+  color: #FFFFFF;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(15, 23, 42, 0.2);
+  transition: all 0.2s ease;
+}
+
+.final-cta-btn-lost:hover {
+  background: #1E293B;
+  transform: translateY(-2px);
+  color: #FFFFFF;
+}
+
+.final-cta-btn-found {
+  padding: 14px 28px;
+  background: #10B981;
+  color: #FFFFFF;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
+  transition: all 0.2s ease;
+}
+
+.final-cta-btn-found:hover {
+  background: #059669;
+  transform: translateY(-2px);
+  color: #FFFFFF;
+}

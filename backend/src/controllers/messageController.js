@@ -2,7 +2,8 @@ import pool from '../config/db.js';
 import { createNotification } from '../utils/notificationHelper.js';
 
 /**
- * List all conversations where current user is claimant, finder, or admin.
+ * List all conversations where current user is claimant, finder, reporter, or admin.
+ * Returns combined list of Claim Conversations and Recovery Conversations.
  * GET /api/messages/conversations
  */
 export const getUserConversations = async (req, res, next) => {
@@ -10,7 +11,8 @@ export const getUserConversations = async (req, res, next) => {
         const userId = req.user.id;
         const isAdmin = req.user.role === 'ADMIN';
 
-        const [rows] = await pool.query(`
+        // 1. Fetch Claim Conversations
+        const [claimRows] = await pool.query(`
             SELECT
                 conv.id, conv.claim_id, conv.claimant_id, conv.finder_id, conv.last_message_at, conv.created_at,
                 c.status as claim_status,
@@ -40,14 +42,15 @@ export const getUserConversations = async (req, res, next) => {
             ORDER BY COALESCE(conv.last_message_at, conv.created_at) DESC
         `, [userId, userId, userId, isAdmin]);
 
-        // Transform into secure, user-centric conversation summaries
-        const conversations = rows.map(conv => {
+        const claimConversations = claimRows.map(conv => {
             const isUserClaimant = conv.claimant_id === userId;
             const otherParticipantName = isUserClaimant ? conv.finder_name : conv.claimant_name;
             const otherParticipantRole = isUserClaimant ? 'Finder' : 'Claimant';
 
             return {
                 id: conv.id,
+                compositeId: `claim:${conv.id}`,
+                contextType: 'CLAIM',
                 claimId: conv.claim_id,
                 claimStatus: conv.claim_status,
                 foundItemId: conv.found_item_id,
@@ -64,7 +67,70 @@ export const getUserConversations = async (req, res, next) => {
             };
         });
 
-        return res.status(200).json(conversations);
+        // 2. Fetch Recovery Conversations
+        const [recRows] = await pool.query(`
+            SELECT
+                rconv.id, rconv.recovery_id, rconv.reporter_id, rconv.finder_id, rconv.last_message_at, rconv.created_at,
+                r.status as recovery_status,
+                l.id as lost_item_id, l.title as lost_title, l.category as lost_category,
+                (SELECT image_url FROM ITEM_IMAGES WHERE lost_item_id = l.id LIMIT 1) as lost_image,
+                reporter.name as reporter_name,
+                finder.name as finder_name,
+                (
+                    SELECT message_text
+                    FROM RECOVERY_MESSAGES
+                    WHERE conversation_id = rconv.id
+                    ORDER BY created_at DESC LIMIT 1
+                ) as last_message_text,
+                (
+                    SELECT COUNT(*)
+                    FROM RECOVERY_MESSAGES
+                    WHERE conversation_id = rconv.id
+                      AND sender_id != ?
+                      AND is_read = FALSE
+                ) as unread_count
+            FROM RECOVERY_CONVERSATIONS rconv
+            JOIN RECOVERY_SUBMISSIONS r ON rconv.recovery_id = r.id
+            JOIN LOST_ITEMS l ON r.lost_item_id = l.id
+            JOIN USERS reporter ON rconv.reporter_id = reporter.id
+            JOIN USERS finder ON rconv.finder_id = finder.id
+            WHERE rconv.reporter_id = ? OR rconv.finder_id = ? OR ? = TRUE
+            ORDER BY COALESCE(rconv.last_message_at, rconv.created_at) DESC
+        `, [userId, userId, userId, isAdmin]);
+
+        const recoveryConversations = recRows.map(conv => {
+            const isUserReporter = conv.reporter_id === userId;
+            const otherParticipantName = isUserReporter ? conv.finder_name : conv.reporter_name;
+            const otherParticipantRole = isUserReporter ? 'Finder' : 'Owner';
+
+            return {
+                id: conv.id,
+                compositeId: `recovery:${conv.id}`,
+                contextType: 'RECOVERY',
+                recoveryId: conv.recovery_id,
+                recoveryStatus: conv.recovery_status,
+                lostItemId: conv.lost_item_id,
+                itemTitle: conv.lost_title,
+                itemCategory: conv.lost_category,
+                itemImage: conv.lost_image,
+                otherParticipantName,
+                otherParticipantRole,
+                lastMessageText: conv.last_message_text,
+                lastMessageAt: conv.last_message_at,
+                unreadCount: Number(conv.unread_count) || 0,
+                createdAt: conv.created_at,
+                isReadOnly: ['REJECTED', 'CANCELLED'].includes(conv.recovery_status)
+            };
+        });
+
+        // 3. Combined and sorted by most recent activity
+        const allConversations = [...claimConversations, ...recoveryConversations].sort((a, b) => {
+            const timeA = new Date(a.lastMessageAt || a.createdAt).getTime();
+            const timeB = new Date(b.lastMessageAt || b.createdAt).getTime();
+            return timeB - timeA;
+        });
+
+        return res.status(200).json(allConversations);
     } catch (error) {
         next(error);
     }
@@ -124,7 +190,7 @@ export const getOrCreateConversationByClaim = async (req, res, next) => {
 };
 
 /**
- * Get conversation details and message history.
+ * Get conversation details and message history for a Claim conversation.
  * GET /api/messages/conversations/:id
  */
 export const getConversationById = async (req, res, next) => {
@@ -181,6 +247,8 @@ export const getConversationById = async (req, res, next) => {
         return res.status(200).json({
             conversation: {
                 id: conv.id,
+                compositeId: `claim:${conv.id}`,
+                contextType: 'CLAIM',
                 claimId: conv.claim_id,
                 claimStatus: conv.claim_status,
                 foundItemId: conv.found_item_id,
@@ -200,7 +268,7 @@ export const getConversationById = async (req, res, next) => {
 };
 
 /**
- * Send a message within an authorized conversation.
+ * Send a message within an authorized claim conversation.
  * POST /api/messages/conversations/:id
  */
 export const sendMessage = async (req, res, next) => {
@@ -210,12 +278,11 @@ export const sendMessage = async (req, res, next) => {
         const userId = req.user.id;
         const isAdmin = req.user.role === 'ADMIN';
 
-        // 1. Validate and sanitize content (Feature E: Input validation & sanitization)
+        // 1. Validate and sanitize content
         if (!messageText || typeof messageText !== 'string' || !messageText.trim()) {
             return res.status(400).json({ message: 'Message content cannot be empty.' });
         }
 
-        // Strip null bytes and unprintable control characters (preserving newlines, tabs)
         const sanitizedText = messageText
             .replace(/\0/g, '')
             .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
@@ -281,7 +348,7 @@ export const sendMessage = async (req, res, next) => {
                 WHERE m.id = ?
             `, [insertResult.insertId]);
 
-            // ── Fire-and-forget: in-app notification to recipient (email disabled to preserve Brevo API quota) ──
+            // Fire-and-forget: in-app notification to recipient
             const recipientId = conv.claimant_id === userId ? conv.finder_id : conv.claimant_id;
             pool.query(`
                 SELECT (SELECT name FROM USERS WHERE id = ?) as sender_name
@@ -300,7 +367,6 @@ export const sendMessage = async (req, res, next) => {
             }).catch(err => {
                 console.error('[MessageController] Failed to send in-app notification:', err.message);
             });
-            // ─────────────────────────────────────────────────────────────
 
             return res.status(201).json({
                 message: 'Message sent successfully.',
@@ -318,7 +384,7 @@ export const sendMessage = async (req, res, next) => {
 };
 
 /**
- * Mark messages in a conversation as read.
+ * Mark messages in a claim conversation as read.
  * POST /api/messages/conversations/:id/read
  */
 export const markConversationAsRead = async (req, res, next) => {
@@ -327,7 +393,6 @@ export const markConversationAsRead = async (req, res, next) => {
         const userId = req.user.id;
         const isAdmin = req.user.role === 'ADMIN';
 
-        // 1. Authorization check
         const [convRows] = await pool.query(`
             SELECT claimant_id, finder_id
             FROM CLAIM_CONVERSATIONS
@@ -344,7 +409,6 @@ export const markConversationAsRead = async (req, res, next) => {
             return res.status(403).json({ message: 'You are not authorized to update this conversation.' });
         }
 
-        // 2. Mark incoming messages as read
         await pool.query(`
             UPDATE CLAIM_MESSAGES
             SET is_read = TRUE, read_at = NOW()
@@ -358,14 +422,14 @@ export const markConversationAsRead = async (req, res, next) => {
 };
 
 /**
- * Retrieve total unread messages count for current user.
+ * Retrieve total unread messages count for current user (claims + recoveries).
  * GET /api/messages/unread-count
  */
 export const getUnreadMessageCount = async (req, res, next) => {
     try {
         const userId = req.user.id;
 
-        const [rows] = await pool.query(`
+        const [claimRows] = await pool.query(`
             SELECT COUNT(*) as unread_count
             FROM CLAIM_MESSAGES m
             JOIN CLAIM_CONVERSATIONS conv ON m.conversation_id = conv.id
@@ -374,8 +438,19 @@ export const getUnreadMessageCount = async (req, res, next) => {
               AND m.is_read = FALSE
         `, [userId, userId, userId]);
 
+        const [recRows] = await pool.query(`
+            SELECT COUNT(*) as unread_count
+            FROM RECOVERY_MESSAGES m
+            JOIN RECOVERY_CONVERSATIONS conv ON m.conversation_id = conv.id
+            WHERE (conv.reporter_id = ? OR conv.finder_id = ?)
+              AND m.sender_id != ?
+              AND m.is_read = FALSE
+        `, [userId, userId, userId]);
+
+        const totalUnread = (Number(claimRows[0]?.unread_count) || 0) + (Number(recRows[0]?.unread_count) || 0);
+
         return res.status(200).json({
-            unreadCount: Number(rows[0]?.unread_count) || 0
+            unreadCount: totalUnread
         });
     } catch (error) {
         next(error);
@@ -383,7 +458,7 @@ export const getUnreadMessageCount = async (req, res, next) => {
 };
 
 /**
- * Report an inappropriate or abusive message.
+ * Report an inappropriate or abusive claim message.
  * POST /api/messages/messages/:messageId/report
  */
 export const reportMessage = async (req, res, next) => {
@@ -404,7 +479,6 @@ export const reportMessage = async (req, res, next) => {
             ? details.replace(/\0/g, '').trim().substring(0, 500)
             : null;
 
-        // 1. Find the target message and its conversation
         const [msgRows] = await pool.query(`
             SELECT m.id, m.conversation_id, m.sender_id,
                    conv.claimant_id, conv.finder_id
@@ -419,18 +493,15 @@ export const reportMessage = async (req, res, next) => {
 
         const msg = msgRows[0];
 
-        // 2. Authorization: reporter must be an active participant in that conversation
         const isParticipant = msg.claimant_id === userId || msg.finder_id === userId || isAdmin;
         if (!isParticipant) {
             return res.status(403).json({ message: 'You are not authorized to report messages from this conversation.' });
         }
 
-        // 3. User cannot report their own message
         if (msg.sender_id === userId) {
             return res.status(400).json({ message: 'You cannot report your own message.' });
         }
 
-        // 4. Duplicate prevention
         const [existing] = await pool.query(
             'SELECT id FROM MESSAGE_REPORTS WHERE message_id = ? AND reporter_id = ? LIMIT 1',
             [messageId, userId]
@@ -440,7 +511,6 @@ export const reportMessage = async (req, res, next) => {
             return res.status(400).json({ message: 'You have already reported this message. Our moderation team is reviewing it.' });
         }
 
-        // 5. Insert report
         await pool.query(`
             INSERT INTO MESSAGE_REPORTS (message_id, conversation_id, reporter_id, reported_user_id, reason, details, status)
             VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
@@ -450,6 +520,369 @@ export const reportMessage = async (req, res, next) => {
             message: 'Thank you. The message has been flagged for administrative review.'
         });
     } catch (error) {
+        next(error);
+    }
+};
+
+// ============================================================================
+// RECOVERY WORKFLOW MESSAGING ENDPOINTS
+// ============================================================================
+
+/**
+ * Retrieve or initialize a conversation tied to an authorized recovery submission.
+ * GET /api/messages/conversations/recovery/:recoveryId
+ */
+export const getOrCreateConversationByRecovery = async (req, res, next) => {
+    try {
+        const { recoveryId } = req.params;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+
+        const [recRows] = await pool.query(`
+            SELECT r.id, r.finder_id, r.status, l.user_id as reporter_id
+            FROM RECOVERY_SUBMISSIONS r
+            JOIN LOST_ITEMS l ON r.lost_item_id = l.id
+            WHERE r.id = ?
+        `, [recoveryId]);
+
+        if (recRows.length === 0) {
+            return res.status(404).json({ message: 'Recovery report not found.' });
+        }
+
+        const recovery = recRows[0];
+        const isParticipant = recovery.finder_id === userId || recovery.reporter_id === userId || isAdmin;
+        if (!isParticipant) {
+            return res.status(403).json({ message: 'You are not authorized to access conversations for this recovery report.' });
+        }
+
+        if (recovery.status !== 'APPROVED' && !isAdmin) {
+            return res.status(400).json({
+                message: 'Messaging between finder and owner is only available after an administrator reviews and approves the recovery report.'
+            });
+        }
+
+        let [convRows] = await pool.query(
+            'SELECT id FROM RECOVERY_CONVERSATIONS WHERE recovery_id = ? LIMIT 1',
+            [recoveryId]
+        );
+
+        let conversationId;
+        if (convRows.length > 0) {
+            conversationId = convRows[0].id;
+        } else {
+            const [insertResult] = await pool.query(`
+                INSERT INTO RECOVERY_CONVERSATIONS (recovery_id, reporter_id, finder_id)
+                VALUES (?, ?, ?)
+            `, [recovery.id, recovery.reporter_id, recovery.finder_id]);
+            conversationId = insertResult.insertId;
+        }
+
+        return res.status(200).json({ conversationId });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Get recovery conversation details and message history.
+ * GET /api/messages/recovery-conversations/:id
+ */
+export const getRecoveryConversationById = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+
+        const [convRows] = await pool.query(`
+            SELECT
+                rconv.id, rconv.recovery_id, rconv.reporter_id, rconv.finder_id, rconv.created_at,
+                r.status as recovery_status,
+                l.id as lost_item_id, l.title as lost_title, l.category as lost_category,
+                (SELECT image_url FROM ITEM_IMAGES WHERE lost_item_id = l.id LIMIT 1) as lost_image,
+                reporter.name as reporter_name,
+                finder.name as finder_name
+            FROM RECOVERY_CONVERSATIONS rconv
+            JOIN RECOVERY_SUBMISSIONS r ON rconv.recovery_id = r.id
+            JOIN LOST_ITEMS l ON r.lost_item_id = l.id
+            JOIN USERS reporter ON rconv.reporter_id = reporter.id
+            JOIN USERS finder ON rconv.finder_id = finder.id
+            WHERE rconv.id = ?
+        `, [id]);
+
+        if (convRows.length === 0) {
+            return res.status(404).json({ message: 'Recovery conversation not found.' });
+        }
+
+        const conv = convRows[0];
+
+        const isParticipant = conv.reporter_id === userId || conv.finder_id === userId || isAdmin;
+        if (!isParticipant) {
+            return res.status(403).json({ message: 'You are not authorized to view this conversation.' });
+        }
+
+        const [messages] = await pool.query(`
+            SELECT
+                m.id, m.conversation_id, m.sender_id, m.message_text,
+                m.is_read, m.read_at, m.created_at,
+                u.name as sender_name
+            FROM RECOVERY_MESSAGES m
+            JOIN USERS u ON m.sender_id = u.id
+            WHERE m.conversation_id = ?
+            ORDER BY m.created_at ASC
+        `, [id]);
+
+        const isUserReporter = conv.reporter_id === userId;
+        const otherParticipantName = isUserReporter ? conv.finder_name : conv.reporter_name;
+        const otherParticipantRole = isUserReporter ? 'Finder' : 'Owner';
+
+        return res.status(200).json({
+            conversation: {
+                id: conv.id,
+                compositeId: `recovery:${conv.id}`,
+                contextType: 'RECOVERY',
+                recoveryId: conv.recovery_id,
+                recoveryStatus: conv.recovery_status,
+                lostItemId: conv.lost_item_id,
+                itemTitle: conv.lost_title,
+                itemCategory: conv.lost_category,
+                itemImage: conv.lost_image,
+                otherParticipantName,
+                otherParticipantRole,
+                isReadOnly: ['REJECTED', 'CANCELLED'].includes(conv.recovery_status),
+                createdAt: conv.created_at
+            },
+            messages
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Send a message within an authorized recovery conversation.
+ * POST /api/messages/recovery-conversations/:id
+ */
+export const sendRecoveryMessage = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { messageText } = req.body;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+
+        if (!messageText || typeof messageText !== 'string' || !messageText.trim()) {
+            return res.status(400).json({ message: 'Message content cannot be empty.' });
+        }
+
+        const sanitizedText = messageText
+            .replace(/\0/g, '')
+            .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+            .trim();
+
+        if (sanitizedText.length === 0) {
+            return res.status(400).json({ message: 'Message content cannot be empty.' });
+        }
+
+        if (sanitizedText.length > 2000) {
+            return res.status(400).json({ message: 'Message exceeds the maximum limit of 2,000 characters.' });
+        }
+
+        const [convRows] = await pool.query(`
+            SELECT rconv.id, rconv.recovery_id, rconv.reporter_id, rconv.finder_id, r.status as recovery_status
+            FROM RECOVERY_CONVERSATIONS rconv
+            JOIN RECOVERY_SUBMISSIONS r ON rconv.recovery_id = r.id
+            WHERE rconv.id = ?
+        `, [id]);
+
+        if (convRows.length === 0) {
+            return res.status(404).json({ message: 'Recovery conversation not found.' });
+        }
+
+        const conv = convRows[0];
+
+        const isParticipant = conv.reporter_id === userId || conv.finder_id === userId || isAdmin;
+        if (!isParticipant) {
+            return res.status(403).json({ message: 'You are not authorized to send messages in this conversation.' });
+        }
+
+        if (conv.recovery_status !== 'APPROVED' && !isAdmin) {
+            return res.status(400).json({
+                message: 'Messaging between finder and owner is only available after an administrator reviews and approves the recovery report.'
+            });
+        }
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            const [insertResult] = await connection.query(`
+                INSERT INTO RECOVERY_MESSAGES (conversation_id, sender_id, message_text)
+                VALUES (?, ?, ?)
+            `, [id, userId, sanitizedText]);
+
+            await connection.query(`
+                UPDATE RECOVERY_CONVERSATIONS
+                SET last_message_at = NOW()
+                WHERE id = ?
+            `, [id]);
+
+            await connection.commit();
+
+            const [newMsgRows] = await connection.query(`
+                SELECT m.id, m.conversation_id, m.sender_id, m.message_text, m.is_read, m.read_at, m.created_at, u.name as sender_name
+                FROM RECOVERY_MESSAGES m
+                JOIN USERS u ON m.sender_id = u.id
+                WHERE m.id = ?
+            `, [insertResult.insertId]);
+
+            // Fire-and-forget in-app notification to the other participant
+            const recipientId = conv.reporter_id === userId ? conv.finder_id : conv.reporter_id;
+            pool.query(`
+                SELECT (SELECT name FROM USERS WHERE id = ?) as sender_name
+            `, [userId]).then(([rows]) => {
+                const sender_name = rows?.[0]?.sender_name || 'Someone';
+                const cleanPreview = sanitizedText.replace(/\s+/g, ' ');
+                const preview = cleanPreview.length > 100 ? `${cleanPreview.substring(0, 100)}...` : cleanPreview;
+
+                createNotification(
+                    recipientId,
+                    'MESSAGE_RECEIVED',
+                    `New message from ${sender_name}`,
+                    preview,
+                    `/messages?recoveryId=${conv.recovery_id}`
+                );
+            }).catch(err => {
+                console.error('[RecoveryMessage] Notification error:', err.message);
+            });
+
+            return res.status(201).json({
+                message: 'Message sent successfully.',
+                data: newMsgRows[0]
+            });
+        } catch (txError) {
+            await connection.rollback();
+            throw txError;
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Mark messages in a recovery conversation as read.
+ * POST /api/messages/recovery-conversations/:id/read
+ */
+export const markRecoveryConversationAsRead = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+
+        const [convRows] = await pool.query(`
+            SELECT reporter_id, finder_id
+            FROM RECOVERY_CONVERSATIONS
+            WHERE id = ?
+        `, [id]);
+
+        if (convRows.length === 0) {
+            return res.status(404).json({ message: 'Recovery conversation not found.' });
+        }
+
+        const conv = convRows[0];
+        const isParticipant = conv.reporter_id === userId || conv.finder_id === userId || isAdmin;
+        if (!isParticipant) {
+            return res.status(403).json({ message: 'You are not authorized to update this conversation.' });
+        }
+
+        await pool.query(`
+            UPDATE RECOVERY_MESSAGES
+            SET is_read = TRUE, read_at = NOW()
+            WHERE conversation_id = ? AND sender_id != ? AND is_read = FALSE
+        `, [id, userId]);
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Report an inappropriate or abusive recovery message.
+ * Strictly derives reported_user_id on the server from the message sender.
+ * Enforces uq_recovery_message_reporter unique constraint.
+ * POST /api/messages/recovery-messages/:messageId/report
+ */
+export const reportRecoveryMessage = async (req, res, next) => {
+    try {
+        const { messageId } = req.params;
+        const { reason, details } = req.body;
+        const userId = req.user.id;
+        const isAdmin = req.user.role === 'ADMIN';
+
+        const validReasons = ['HARASSMENT', 'SPAM', 'SCAM_FRAUD', 'INAPPROPRIATE', 'OTHER'];
+        if (!reason || !validReasons.includes(reason)) {
+            return res.status(400).json({
+                message: `Please select a valid report reason: ${validReasons.join(', ')}.`
+            });
+        }
+
+        const sanitizedDetails = details && typeof details === 'string'
+            ? details.replace(/\0/g, '').trim().substring(0, 500)
+            : null;
+
+        // 1. Find target recovery message and verify conversation participants
+        const [msgRows] = await pool.query(`
+            SELECT m.id, m.conversation_id, m.sender_id,
+                   rconv.reporter_id, rconv.finder_id
+            FROM RECOVERY_MESSAGES m
+            JOIN RECOVERY_CONVERSATIONS rconv ON m.conversation_id = rconv.id
+            WHERE m.id = ?
+        `, [messageId]);
+
+        if (msgRows.length === 0) {
+            return res.status(404).json({ message: 'Recovery message not found.' });
+        }
+
+        const msg = msgRows[0];
+
+        // 2. Authorization check
+        const isParticipant = msg.reporter_id === userId || msg.finder_id === userId || isAdmin;
+        if (!isParticipant) {
+            return res.status(403).json({ message: 'You are not authorized to report messages from this conversation.' });
+        }
+
+        // 3. Prevent self-report
+        if (msg.sender_id === userId) {
+            return res.status(400).json({ message: 'You cannot report your own message.' });
+        }
+
+        // 4. Derive reported_user_id strictly from msg.sender_id on server
+        const reportedUserId = msg.sender_id;
+
+        // 5. Duplicate check (supplemented by DB unique key uq_recovery_message_reporter)
+        const [existing] = await pool.query(
+            'SELECT id FROM RECOVERY_MESSAGE_REPORTS WHERE message_id = ? AND reporter_id = ? LIMIT 1',
+            [messageId, userId]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ message: 'You have already reported this message. Our moderation team is reviewing it.' });
+        }
+
+        // 6. Insert report
+        await pool.query(`
+            INSERT INTO RECOVERY_MESSAGE_REPORTS (message_id, conversation_id, reporter_id, reported_user_id, reason, details, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+        `, [msg.id, msg.conversation_id, userId, reportedUserId, reason, sanitizedDetails]);
+
+        return res.status(201).json({
+            message: 'Thank you. The message has been flagged for administrative review.'
+        });
+    } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({ message: 'You have already reported this message.' });
+        }
         next(error);
     }
 };

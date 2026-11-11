@@ -634,3 +634,213 @@ export const sendClaimConfirmationEmail = async (toEmail, toName, itemTitle, cla
     console.error(`❌ [CLAIM CONFIRMATION EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
     throw lastError;
 };
+
+/**
+ * Sends an email notification to the lost-item owner when a finder reports having found their item.
+ * @param {string} toEmail
+ * @param {string} toName
+ * @param {string} finderName
+ * @param {string} itemTitle
+ * @param {number} recoveryId
+ */
+export const sendRecoverySubmittedEmail = async (toEmail, toName, finderName, itemTitle, recoveryId) => {
+    if (isDevMode) {
+        console.log('\n📧 [DEV EMAIL - RECOVERY SUBMITTED] ──────────────────');
+        console.log(`   To          : ${toName} <${toEmail}>`);
+        console.log(`   Finder      : ${finderName}`);
+        console.log(`   Item        : "${itemTitle}"`);
+        console.log(`   Recovery ID : #${recoveryId}`);
+        console.log('──────────────────────────────────────────────────────\n');
+        return { mode: 'development' };
+    }
+
+    const recoveryUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/recoveries/${recoveryId}`;
+    const htmlContent = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
+            <div style="text-align: center; margin-bottom: 28px;">
+                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 FoundiT</h1>
+            </div>
+            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">🎁 Great News! Someone May Have Found Your Item</h2>
+            <p style="color: #64748B; margin-bottom: 20px;">
+                Hi <strong>${toName}</strong>,
+            </p>
+            <p style="color: #334155; font-size: 15px; line-height: 1.6; margin-bottom: 20px;">
+                A community member (<strong>${finderName}</strong>) has reported finding an item matching your lost report <strong>"${itemTitle}"</strong>.
+            </p>
+            <div style="background: #EEF2FF; border-radius: 10px; padding: 18px 20px; margin-bottom: 24px; border-left: 4px solid #4361EE;">
+                <p style="color: #1E293B; font-weight: 700; font-size: 14px; margin: 0 0 6px 0;">
+                    Recovery Reference: #${String(recoveryId).padStart(4, '0')}
+                </p>
+                <p style="color: #475569; font-size: 13px; margin: 0;">
+                    The submission includes item condition, location details, and photographs. Our administrators are reviewing the evidence.
+                </p>
+            </div>
+            <div style="text-align: center; margin-bottom: 28px;">
+                <a href="${recoveryUrl}"
+                   style="display: inline-block; background: #4361EE; color: #fff; text-decoration: none;
+                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
+                    View Recovery Details →
+                </a>
+            </div>
+            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
+            <p style="color: #94A3B8; font-size: 12px;">
+                You received this notification because you reported an item lost on FoundiT.
+            </p>
+        </div>
+    `;
+
+    const MAX_ATTEMPTS = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            await axios.post(
+                'https://api.brevo.com/v3/smtp/email',
+                {
+                    sender: {
+                        name: process.env.EMAIL_FROM_NAME || 'FoundiT',
+                        email: process.env.EMAIL_FROM,
+                    },
+                    to: [{ email: toEmail, name: toName }],
+                    subject: `Found Item Match: Someone found your "${itemTitle}"!`,
+                    htmlContent,
+                },
+                {
+                    headers: {
+                        'api-key': process.env.BREVO_API_KEY,
+                        'Content-Type': 'application/json',
+                    },
+                    httpsAgent: brevoAgent,
+                    timeout: 10000,
+                }
+            );
+            console.log(`✅ [RECOVERY SUBMITTED EMAIL] Sent to owner: ${toEmail}`);
+            return { mode: 'production', to: toEmail };
+        } catch (error) {
+            lastError = error;
+            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
+                const delayMs = attempt * 1000;
+                console.warn(`⚠️ [RECOVERY SUBMITTED EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
+                await sleep(delayMs);
+                continue;
+            }
+            break;
+        }
+    }
+
+    console.error(`❌ [RECOVERY SUBMITTED EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
+    throw lastError;
+};
+
+/**
+ * Sends an email notification to finder or owner regarding admin recovery decision (Approval, Rejection, or Revocation).
+ * Strictly omits internal administrative notes.
+ * @param {string} toEmail
+ * @param {string} toName
+ * @param {string} itemTitle
+ * @param {number} recoveryId
+ * @param {'APPROVED'|'REJECTED'|'CANCELLED'} decision
+ * @param {string|null} decisionReason
+ */
+export const sendRecoveryDecisionEmail = async (toEmail, toName, itemTitle, recoveryId, decision, decisionReason) => {
+    if (isDevMode) {
+        console.log('\n📧 [DEV EMAIL - RECOVERY DECISION] ──────────────────');
+        console.log(`   To          : ${toName} <${toEmail}>`);
+        console.log(`   Decision    : ${decision}`);
+        console.log(`   Item        : "${itemTitle}"`);
+        console.log(`   Reason      : ${decisionReason || 'None'}`);
+        console.log('──────────────────────────────────────────────────────\n');
+        return { mode: 'development' };
+    }
+
+    const isApproved = decision === 'APPROVED';
+    const isRevoked = decision === 'CANCELLED';
+    const accentColor = isApproved ? '#059669' : (isRevoked ? '#D97706' : '#DC2626');
+    const bgColor = isApproved ? '#ECFDF5' : (isRevoked ? '#FFFBEB' : '#FEF2F2');
+
+    let titleText = `Recovery Report for "${itemTitle}"`;
+    let headingText = '';
+    let explanationText = '';
+
+    if (isApproved) {
+        headingText = '✅ Recovery Submission Approved!';
+        explanationText = 'The administrator has verified the match. You may now communicate to coordinate the secure handover of the item.';
+    } else if (isRevoked) {
+        headingText = '⚠️ Recovery Approval Revoked';
+        explanationText = 'The previous recovery approval for this item was revoked by the administrator after further review.';
+    } else {
+        headingText = '❌ Recovery Submission Rejected';
+        explanationText = 'After careful review, the administrator determined that this recovery report does not match the lost item.';
+    }
+
+    const recoveryUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/recoveries/${recoveryId}`;
+    const htmlContent = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
+            <div style="text-align: center; margin-bottom: 28px;">
+                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 FoundiT</h1>
+            </div>
+            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">${titleText}</h2>
+            <p style="color: #64748B; margin-bottom: 20px;">Hi <strong>${toName}</strong>,</p>
+            <div style="background: ${bgColor}; border-radius: 10px; padding: 18px 20px; margin-bottom: 24px; border-left: 4px solid ${accentColor};">
+                <p style="color: ${accentColor}; font-weight: 700; font-size: 16px; margin: 0 0 8px 0;">
+                    ${headingText}
+                </p>
+                ${decisionReason ? `<p style="color: #374151; font-size: 14px; margin: 0;"><strong>Decision Reason:</strong> ${decisionReason}</p>` : ''}
+            </div>
+            <p style="color: #64748B; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
+                ${explanationText}
+            </p>
+            <div style="text-align: center; margin-bottom: 28px;">
+                <a href="${recoveryUrl}"
+                   style="display: inline-block; background: ${accentColor}; color: #fff; text-decoration: none;
+                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
+                    View Recovery Details →
+                </a>
+            </div>
+            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
+            <p style="color: #94A3B8; font-size: 12px;">This decision was rendered by an administrator on FoundiT.</p>
+        </div>
+    `;
+
+    const MAX_ATTEMPTS = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            await axios.post(
+                'https://api.brevo.com/v3/smtp/email',
+                {
+                    sender: {
+                        name: process.env.EMAIL_FROM_NAME || 'FoundiT',
+                        email: process.env.EMAIL_FROM,
+                    },
+                    to: [{ email: toEmail, name: toName }],
+                    subject: `Update on Recovery #${recoveryId}: ${isApproved ? 'Approved 🎉' : (isRevoked ? 'Approval Revoked' : 'Decision Rendered')}`,
+                    htmlContent,
+                },
+                {
+                    headers: {
+                        'api-key': process.env.BREVO_API_KEY,
+                        'Content-Type': 'application/json',
+                    },
+                    httpsAgent: brevoAgent,
+                    timeout: 10000,
+                }
+            );
+            console.log(`✅ [RECOVERY DECISION EMAIL] Sent to: ${toEmail} (${decision})`);
+            return { mode: 'production', to: toEmail };
+        } catch (error) {
+            lastError = error;
+            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
+                const delayMs = attempt * 1000;
+                console.warn(`⚠️ [RECOVERY DECISION EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
+                await sleep(delayMs);
+                continue;
+            }
+            break;
+        }
+    }
+
+    console.error(`❌ [RECOVERY DECISION EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
+    throw lastError;
+};
