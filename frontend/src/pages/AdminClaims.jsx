@@ -8,7 +8,11 @@ import EmptyState from '../components/common/EmptyState';
 import { Skeleton } from '../components/common/Loader';
 import { useToast } from '../components/common/Toast';
 import { adminClaimApi } from '../services/claimApi';
+import { adminRecoveryApi } from '../services/recoveryApi';
+import { adminHandoverApi } from '../services/handoverApi';
 import { formatDate } from '../utils/formatters';
+import RecoveryReviewModal from '../components/admin/RecoveryReviewModal';
+import HandoverInspectionModal from '../components/admin/HandoverInspectionModal';
 
 const AdminClaims = () => {
   const toast = useToast();
@@ -35,13 +39,38 @@ const AdminClaims = () => {
   const [submittingDecision, setSubmittingDecision] = useState(false);
 
   // Tab & Moderation State (Feature F: Abuse Handling & Moderation)
-  const [activeTab, setActiveTab] = useState('CLAIMS'); // 'CLAIMS' | 'MODERATION'
+  const [activeTab, setActiveTab] = useState('CLAIMS'); // 'CLAIMS' | 'RECOVERIES' | 'MODERATION'
   const [reports, setReports] = useState([]);
   const [loadingReports, setLoadingReports] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
   const [reportAction, setReportAction] = useState('ACTION_TAKEN');
   const [reportAdminNotes, setReportAdminNotes] = useState('');
   const [submittingReportReview, setSubmittingReportReview] = useState(false);
+
+  // Recovery admin state
+  const [recoveries, setRecoveries] = useState([]);
+  const [loadingRecoveries, setLoadingRecoveries] = useState(false);
+  const [recoveryStatusFilter, setRecoveryStatusFilter] = useState('ALL');
+  const [recoverySearch, setRecoverySearch] = useState('');
+  const [selectedRecoveryId, setSelectedRecoveryId] = useState(null);
+  const [recoveryDetailData, setRecoveryDetailData] = useState(null);
+  const [recoveryDetailLoading, setRecoveryDetailLoading] = useState(false);
+  const [recoveryDecision, setRecoveryDecision] = useState('APPROVED');
+  const [recoveryDecisionReason, setRecoveryDecisionReason] = useState('');
+  const [recoveryAdminNotes, setRecoveryAdminNotes] = useState('');
+  const [submittingRecoveryDecision, setSubmittingRecoveryDecision] = useState(false);
+  const [revocationReason, setRevocationReason] = useState('');
+  const [showRevocationForm, setShowRevocationForm] = useState(false);
+
+  // Handover monitoring state (Phase 8)
+  const [handovers, setHandovers] = useState([]);
+  const [loadingHandovers, setLoadingHandovers] = useState(false);
+  const [handoverStatusFilter, setHandoverStatusFilter] = useState('ALL');
+  const [handoverSearch, setHandoverSearch] = useState('');
+  const [handoverStats, setHandoverStats] = useState({ total: 0, in_progress: 0, completed: 0, issues: 0 });
+
+  // Handover Inspection Modal state (Priority 2)
+  const [inspectHandoverId, setInspectHandoverId] = useState(null);
 
   const fetchClaims = async () => {
     setLoading(true);
@@ -124,7 +153,31 @@ const AdminClaims = () => {
     if (activeTab === 'MODERATION') {
       fetchReports();
     }
-  }, [activeTab]);
+    if (activeTab === 'RECOVERIES') {
+      fetchRecoveries();
+    }
+    if (activeTab === 'HANDOVERS') {
+      fetchHandovers();
+    }
+  }, [activeTab, handoverStatusFilter]);
+
+  const fetchHandovers = async () => {
+    setLoadingHandovers(true);
+    try {
+      const res = await adminHandoverApi.getAll({
+        status: handoverStatusFilter,
+        search: handoverSearch.trim() || undefined
+      });
+      setHandovers(res.data?.handovers || []);
+      if (res.data?.stats) {
+        setHandoverStats(res.data.stats);
+      }
+    } catch (err) {
+      toast('Failed to load handover records.', 'error');
+    } finally {
+      setLoadingHandovers(false);
+    }
+  };
 
   const handleReportReviewSubmit = async (e) => {
     e?.preventDefault();
@@ -144,7 +197,89 @@ const AdminClaims = () => {
     }
   };
 
+  // ── Recovery admin handlers ───────────────────────────────────────────────
+  const fetchRecoveries = async () => {
+    setLoadingRecoveries(true);
+    try {
+      const res = await adminRecoveryApi.getAll({
+        status: recoveryStatusFilter !== 'ALL' ? recoveryStatusFilter : undefined,
+        search: recoverySearch.trim() || undefined,
+      });
+      const list = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setRecoveries(list);
+    } catch (err) {
+      toast('Failed to load recovery submissions.', 'error');
+    } finally {
+      setLoadingRecoveries(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'RECOVERIES') fetchRecoveries();
+  }, [recoveryStatusFilter]);
+
+  const openRecoveryReviewModal = async (recoveryId) => {
+    setSelectedRecoveryId(recoveryId);
+    setRecoveryDetailLoading(true);
+    setRecoveryDecision('APPROVED');
+    setRecoveryDecisionReason('');
+    setRecoveryAdminNotes('');
+    setShowRevocationForm(false);
+    setRevocationReason('');
+    try {
+      const res = await adminRecoveryApi.getById(recoveryId);
+      const data = res.data?.data || res.data;
+      setRecoveryDetailData(data);
+    } catch (err) {
+      toast('Failed to load recovery details.', 'error');
+      setSelectedRecoveryId(null);
+    } finally {
+      setRecoveryDetailLoading(false);
+    }
+  };
+
+  const handleRecoveryDecisionSubmit = async (e) => {
+    e.preventDefault();
+    if (!recoveryDecisionReason || recoveryDecisionReason.trim().length < 5) {
+      toast('Please provide a decision reason (at least 5 characters).', 'error');
+      return;
+    }
+    setSubmittingRecoveryDecision(true);
+    try {
+      await adminRecoveryApi.decide(selectedRecoveryId, recoveryDecision, recoveryDecisionReason, recoveryAdminNotes);
+      toast(`Recovery submission ${recoveryDecision.toLowerCase()} successfully!`, 'success');
+      setSelectedRecoveryId(null);
+      setRecoveryDetailData(null);
+      fetchRecoveries();
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to submit decision.', 'error');
+    } finally {
+      setSubmittingRecoveryDecision(false);
+    }
+  };
+
+  const handleRecoveryRevoke = async (e) => {
+    e.preventDefault();
+    if (!revocationReason || revocationReason.trim().length < 5) {
+      toast('Please provide a revocation reason (at least 5 characters).', 'error');
+      return;
+    }
+    setSubmittingRecoveryDecision(true);
+    try {
+      await adminRecoveryApi.revoke(selectedRecoveryId, revocationReason, recoveryAdminNotes);
+      toast('Approval revoked successfully.', 'success');
+      setSelectedRecoveryId(null);
+      setRecoveryDetailData(null);
+      fetchRecoveries();
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to revoke approval.', 'error');
+    } finally {
+      setSubmittingRecoveryDecision(false);
+    }
+  };
+
   return (
+    <>
     <div style={{ background: 'var(--color-gray-50)', minHeight: '100vh' }}>
       <Navbar />
       <PageContainer style={{ paddingTop: '100px', paddingBottom: 'var(--space-16)' }}>
@@ -182,6 +317,24 @@ const AdminClaims = () => {
             </button>
             <button
               type="button"
+              onClick={() => setActiveTab('RECOVERIES')}
+              style={{
+                padding: '9px 18px',
+                borderRadius: 'var(--radius-lg)',
+                border: 'none',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                background: activeTab === 'RECOVERIES' ? '#059669' : '#fff',
+                color: activeTab === 'RECOVERIES' ? '#fff' : 'var(--color-gray-700)',
+                boxShadow: activeTab === 'RECOVERIES' ? '0 4px 12px rgba(5, 150, 105, 0.25)' : 'var(--shadow-xs)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              🎁 Found Item Recoveries ({recoveries.length})
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('MODERATION')}
               style={{
                 padding: '9px 18px',
@@ -197,6 +350,24 @@ const AdminClaims = () => {
               }}
             >
               🚨 Message Moderation {reports.filter(r => r.status === 'PENDING').length > 0 && `(${reports.filter(r => r.status === 'PENDING').length} pending)`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('HANDOVERS')}
+              style={{
+                padding: '9px 18px',
+                borderRadius: 'var(--radius-lg)',
+                border: 'none',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                background: activeTab === 'HANDOVERS' ? '#2563EB' : '#fff',
+                color: activeTab === 'HANDOVERS' ? '#fff' : 'var(--color-gray-700)',
+                boxShadow: activeTab === 'HANDOVERS' ? '0 4px 12px rgba(37, 99, 235, 0.25)' : 'var(--shadow-xs)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              🤝 Handovers &amp; Returns ({handoverStats.total || handovers.length})
             </button>
           </div>
         </div>
@@ -340,7 +511,174 @@ const AdminClaims = () => {
           </>
         )}
 
-        {/* Tab 2: MODERATION TAB (Feature F: Abuse Handling & Moderation Portal) */}
+        {/* Tab 2: FOUND ITEM RECOVERIES TAB */}
+        {activeTab === 'RECOVERIES' && (
+          <div>
+            {/* Filter and Search Bar */}
+            <div style={{
+              background: '#fff',
+              borderRadius: 'var(--radius-xl)',
+              padding: '16px 20px',
+              border: '1px solid var(--color-gray-200)',
+              boxShadow: 'var(--shadow-sm)',
+              marginBottom: 'var(--space-6)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 14
+            }}>
+              {/* Status buttons */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['ALL', 'PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'].map(st => (
+                  <button
+                    key={st}
+                    onClick={() => setRecoveryStatusFilter(st)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 999,
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      background: recoveryStatusFilter === st ? '#059669' : 'var(--color-gray-100)',
+                      color: recoveryStatusFilter === st ? '#fff' : 'var(--color-gray-700)',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    {st.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search Form */}
+              <form onSubmit={(e) => { e.preventDefault(); fetchRecoveries(); }} style={{ display: 'flex', gap: 8, flex: '1 1 240px', maxWidth: 360 }}>
+                <input
+                  type="text"
+                  placeholder="Search item, finder, or owner..."
+                  value={recoverySearch}
+                  onChange={e => setRecoverySearch(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--color-gray-300)',
+                    fontSize: 13,
+                    outline: 'none'
+                  }}
+                />
+                <Button type="submit" size="sm" style={{ background: '#059669' }}>
+                  Search
+                </Button>
+              </form>
+            </div>
+
+            {/* Recovery Table */}
+            {loadingRecoveries ? (
+              <div style={{ padding: 40, textAlign: 'center' }}>
+                <Skeleton height={200} />
+              </div>
+            ) : recoveries.length === 0 ? (
+              <EmptyState
+                icon="🎁"
+                title="No Recovery Reports"
+                description={recoveryStatusFilter === 'ALL'
+                  ? 'No community recovery reports have been submitted yet.'
+                  : `No recovery reports currently match the filter "${recoveryStatusFilter}".`}
+              />
+            ) : (
+              <div style={{
+                background: '#fff',
+                borderRadius: 'var(--radius-xl)',
+                border: '1px solid var(--color-gray-200)',
+                boxShadow: 'var(--shadow-sm)',
+                overflow: 'hidden'
+              }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-gray-50)', borderBottom: '1px solid var(--color-gray-200)', color: 'var(--color-gray-500)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      <th style={{ padding: '12px 18px' }}>Recovery ID / Lost Item</th>
+                      <th style={{ padding: '12px 18px' }}>Finder's Submission</th>
+                      <th style={{ padding: '12px 18px' }}>Location &amp; Date</th>
+                      <th style={{ padding: '12px 18px' }}>Status</th>
+                      <th style={{ padding: '12px 18px' }}>Submitted</th>
+                      <th style={{ padding: '12px 18px', textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recoveries.map((r) => {
+                      const statusColor = {
+                        PENDING: { bg: '#FEF3C7', color: '#92400E' },
+                        UNDER_REVIEW: { bg: '#DBEAFE', color: '#1E40AF' },
+                        APPROVED: { bg: '#D1FAE5', color: '#065F46' },
+                        REJECTED: { bg: '#FEE2E2', color: '#991B1B' },
+                        CANCELLED: { bg: '#F3F4F6', color: '#374151' },
+                      }[r.status] || { bg: '#F3F4F6', color: '#374151' };
+
+                      return (
+                        <tr key={r.id} style={{ borderBottom: '1px solid var(--color-gray-100)', transition: 'background 0.15s' }}>
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: '#059669', marginBottom: 2 }}>
+                              RECOVERY #{String(r.id).padStart(4, '0')}
+                            </div>
+                            <div style={{ fontWeight: 700, color: 'var(--color-gray-900)' }}>
+                              {r.lostItemTitle || r.lost_title || r.lost_item_title || '—'}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--color-gray-500)' }}>
+                              {r.lost_category || r.lostItemCategory || 'General Item'}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--color-gray-900)' }}>
+                              {r.finderItemName || r.finder_item_name || r.item_name || '—'}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--color-gray-500)' }}>
+                              Finder: <strong>{r.finderName || r.finder_name || '—'}</strong>
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', fontSize: 13 }}>
+                            <div>📍 {[r.foundLocation || r.found_location, r.foundCity || r.city].filter(Boolean).join(', ') || '—'}</div>
+                            <div style={{ fontSize: 12, color: 'var(--color-gray-500)', marginTop: 2 }}>
+                              📅 {(r.foundDate || r.found_date) ? formatDate(r.foundDate || r.found_date) : '—'}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 10px',
+                              borderRadius: 999,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              background: statusColor.bg,
+                              color: statusColor.color
+                            }}>
+                              {r.status}
+                            </span>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', color: 'var(--color-gray-500)', fontSize: 12 }}>
+                            {formatDate(r.createdAt || r.created_at)}
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', textAlign: 'right' }}>
+                            <Button size="sm" style={{ background: '#059669' }} onClick={() => openRecoveryReviewModal(r.id)}>
+                              Review &amp; Decide →
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: MODERATION TAB (Feature F: Abuse Handling & Moderation Portal) */}
         {activeTab === 'MODERATION' && (
           <div>
             {/* Moderation Controls Header */}
@@ -545,6 +883,224 @@ const AdminClaims = () => {
                             >
                               Review Report →
                             </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 4: HANDOVERS & RETURNS MONITORING (Phase 8) */}
+        {activeTab === 'HANDOVERS' && (
+          <div>
+            {/* Stats Overview */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+              gap: 16,
+              marginBottom: 24
+            }}>
+              <div style={{ background: '#fff', padding: '18px 20px', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-gray-200)', boxShadow: 'var(--shadow-xs)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-gray-500)', textTransform: 'uppercase' }}>Total Handovers</div>
+                <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--color-gray-900)', marginTop: 4 }}>{handoverStats.total || 0}</div>
+              </div>
+              <div style={{ background: '#fff', padding: '18px 20px', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-gray-200)', boxShadow: 'var(--shadow-xs)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#3B82F6', textTransform: 'uppercase' }}>In Progress</div>
+                <div style={{ fontSize: 26, fontWeight: 900, color: '#2563EB', marginTop: 4 }}>{handoverStats.in_progress || 0}</div>
+              </div>
+              <div style={{ background: '#fff', padding: '18px 20px', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-gray-200)', boxShadow: 'var(--shadow-xs)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#10B981', textTransform: 'uppercase' }}>Completed Returns</div>
+                <div style={{ fontSize: 26, fontWeight: 900, color: '#059669', marginTop: 4 }}>{handoverStats.completed || 0}</div>
+              </div>
+              <div style={{ background: '#fff', padding: '18px 20px', borderRadius: 'var(--radius-xl)', border: '1px solid var(--color-gray-200)', boxShadow: 'var(--shadow-xs)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#EF4444', textTransform: 'uppercase' }}>Issues Reported</div>
+                <div style={{ fontSize: 26, fontWeight: 900, color: '#DC2626', marginTop: 4 }}>{handoverStats.issues || 0}</div>
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div style={{
+              background: '#fff',
+              borderRadius: 'var(--radius-xl)',
+              padding: '16px 20px',
+              border: '1px solid var(--color-gray-200)',
+              boxShadow: 'var(--shadow-sm)',
+              marginBottom: 'var(--space-6)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 14
+            }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['ALL', 'INITIATED', 'LOCATION_PUBLISHED', 'SCHEDULED', 'COMPLETED', 'ISSUE_REPORTED'].map(st => (
+                  <button
+                    key={st}
+                    onClick={() => setHandoverStatusFilter(st)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 999,
+                      border: 'none',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      background: handoverStatusFilter === st ? '#2563EB' : 'var(--color-gray-100)',
+                      color: handoverStatusFilter === st ? '#fff' : 'var(--color-gray-700)',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    {st.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+
+              <form onSubmit={(e) => { e.preventDefault(); fetchHandovers(); }} style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  placeholder="Search item, person, city..."
+                  value={handoverSearch}
+                  onChange={(e) => setHandoverSearch(e.target.value)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-lg)',
+                    border: '1px solid var(--color-gray-300)',
+                    fontSize: 13,
+                    outline: 'none',
+                    width: 220
+                  }}
+                />
+                <Button size="sm" variant="secondary" type="submit">
+                  Search
+                </Button>
+              </form>
+            </div>
+
+            {/* Handovers Table */}
+            {loadingHandovers ? (
+              <div style={{ padding: 40, textAlign: 'center' }}>
+                <Skeleton height={200} />
+              </div>
+            ) : handovers.length === 0 ? (
+              <EmptyState
+                icon="🤝"
+                title="No Handover Records"
+                description={handoverStatusFilter === 'ALL'
+                  ? 'No physical handovers have been initiated yet.'
+                  : `No handovers match the status filter "${handoverStatusFilter}".`}
+              />
+            ) : (
+              <div style={{
+                background: '#fff',
+                borderRadius: 'var(--radius-xl)',
+                border: '1px solid var(--color-gray-200)',
+                boxShadow: 'var(--shadow-sm)',
+                overflow: 'hidden'
+              }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-gray-50)', borderBottom: '1px solid var(--color-gray-200)', color: 'var(--color-gray-500)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      <th style={{ padding: '12px 18px' }}>Recovery Ref / Item</th>
+                      <th style={{ padding: '12px 18px' }}>Finder &amp; Owner</th>
+                      <th style={{ padding: '12px 18px' }}>Meeting Location</th>
+                      <th style={{ padding: '12px 18px' }}>Status</th>
+                      <th style={{ padding: '12px 18px' }}>Timeline</th>
+                      <th style={{ padding: '12px 18px', textAlign: 'right' }}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {handovers.map((h) => {
+                      const statusStyles = {
+                        COMPLETED: { bg: '#DCFCE7', color: '#166534', label: '✅ Returned' },
+                        ISSUE_REPORTED: { bg: '#FEE2E2', color: '#991B1B', label: '⚠️ Issue Reported' },
+                        SCHEDULED: { bg: '#E0F2FE', color: '#0369A1', label: '📅 Scheduled' },
+                        LOCATION_PUBLISHED: { bg: '#EEF2FF', color: '#4338CA', label: '📍 Location Set' },
+                        INITIATED: { bg: '#FEF3C7', color: '#92400E', label: '⏳ Initiated' },
+                      }[h.handover_status] || { bg: '#F3F4F6', color: '#374151', label: h.handover_status };
+
+                      return (
+                        <tr key={h.id} style={{ borderBottom: '1px solid var(--color-gray-100)', transition: 'background 0.15s ease' }}>
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: '#059669', marginBottom: 2 }}>
+                              RECOVERY #{String(h.recovery_id).padStart(4, '0')}
+                            </div>
+                            <div style={{ fontWeight: 700, color: 'var(--color-gray-900)' }}>
+                              {h.lost_item_title || h.recovery_item_name}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--color-gray-400)' }}>
+                              Handover ID: #{h.id}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', fontSize: 13 }}>
+                            <div style={{ fontWeight: 600, color: 'var(--color-gray-800)' }}>
+                              Finder: {h.finder_name}
+                            </div>
+                            <div style={{ color: 'var(--color-gray-500)', fontSize: 12 }}>
+                              Owner: {h.owner_name}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', fontSize: 13 }}>
+                            <div style={{ fontWeight: 600, color: 'var(--color-gray-800)' }}>
+                              📍 {h.location_title || 'Meeting Point'}
+                            </div>
+                            <div style={{ color: 'var(--color-gray-500)', fontSize: 12 }}>
+                              {h.city ? `${h.city}, ${h.state || ''}` : h.address ? h.address.slice(0, 30) + '...' : 'Location pending'}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top' }}>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '3px 10px',
+                              borderRadius: 12,
+                              fontSize: 11,
+                              fontWeight: 800,
+                              background: statusStyles.bg,
+                              color: statusStyles.color
+                            }}>
+                              {statusStyles.label}
+                            </span>
+                            {h.issue_count > 0 && (
+                              <span style={{ marginLeft: 6, fontSize: 11, color: '#DC2626', fontWeight: 800 }}>
+                                ({h.issue_count} issue)
+                              </span>
+                            )}
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', fontSize: 12, color: 'var(--color-gray-500)' }}>
+                            <div>Initiated: {formatDate(h.initiated_at || h.created_at)}</div>
+                            {h.completed_at && (
+                              <div style={{ color: '#059669', fontWeight: 700 }}>
+                                Completed: {formatDate(h.completed_at)}
+                              </div>
+                            )}
+                          </td>
+
+                          <td style={{ padding: '14px 18px', verticalAlign: 'top', textAlign: 'right' }}>
+                            <button
+                              onClick={() => setInspectHandoverId(h.id)}
+                              style={{
+                                display: 'inline-block',
+                                padding: '6px 14px',
+                                background: '#EFF6FF',
+                                color: '#1D4ED8',
+                                borderRadius: 'var(--radius-md)',
+                                fontWeight: 700,
+                                fontSize: 12,
+                                border: '1px solid #BFDBFE',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s'
+                              }}
+                              onMouseOver={e => { e.currentTarget.style.background = '#DBEAFE'; e.currentTarget.style.borderColor = '#93C5FD'; }}
+                              onMouseOut={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = '#BFDBFE'; }}
+                            >
+                              🔍 Inspect Details →
+                            </button>
                           </td>
                         </tr>
                       );
@@ -1232,6 +1788,31 @@ const AdminClaims = () => {
         </div>
       )}
 
+      {/* ── Recovery Review & Verification Workspace Modal ── */}
+      <RecoveryReviewModal
+        isOpen={Boolean(selectedRecoveryId)}
+        recoveryId={selectedRecoveryId}
+        loading={recoveryDetailLoading}
+        data={recoveryDetailData}
+        onClose={() => {
+          setSelectedRecoveryId(null);
+          setRecoveryDetailData(null);
+        }}
+        decision={recoveryDecision}
+        setDecision={setRecoveryDecision}
+        decisionReason={recoveryDecisionReason}
+        setDecisionReason={setRecoveryDecisionReason}
+        adminNotes={recoveryAdminNotes}
+        setAdminNotes={setRecoveryAdminNotes}
+        submittingDecision={submittingRecoveryDecision}
+        onSubmitDecision={handleRecoveryDecisionSubmit}
+        showRevocationForm={showRevocationForm}
+        setShowRevocationForm={setShowRevocationForm}
+        revocationReason={revocationReason}
+        setRevocationReason={setRevocationReason}
+        onSubmitRevoke={handleRecoveryRevoke}
+      />
+
       {/* Fullscreen / Enlarged Image Preview Modal */}
       {enlargedImage && (
         <div
@@ -1525,6 +2106,14 @@ const AdminClaims = () => {
         </div>
       )}
     </div>
+
+    {/* Handover Inspection Modal — in-app full detail view for admin */}
+    <HandoverInspectionModal
+      isOpen={Boolean(inspectHandoverId)}
+      handoverId={inspectHandoverId}
+      onClose={() => setInspectHandoverId(null)}
+    />
+    </>
   );
 };
 

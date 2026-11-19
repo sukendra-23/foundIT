@@ -6,7 +6,12 @@ import {
     sendMessage,
     markConversationAsRead,
     getUnreadMessageCount,
-    reportMessage
+    reportMessage,
+    getOrCreateConversationByRecovery,
+    getRecoveryConversationById,
+    sendRecoveryMessage,
+    markRecoveryConversationAsRead,
+    reportRecoveryMessage
 } from '../controllers/messageController.js';
 import { protect } from '../middleware/auth.js';
 import { messageRateLimiter, reportRateLimiter } from '../middleware/rateLimiter.js';
@@ -19,22 +24,21 @@ router.use(protect);
 // 1. Unread count (for navbar badge)
 router.get('/unread-count', getUnreadMessageCount);
 
-// 2. User's conversation list
+// 2. User's conversation list (claims + recoveries)
 router.get('/conversations', getUserConversations);
 
-// 3. Get or create conversation by claim ID
+// 3. Claim conversations
 router.get('/conversations/claim/:claimId', getOrCreateConversationByClaim);
-
-// 4. Single conversation details and message history
 router.get('/conversations/:id', getConversationById);
-
-// 5. Send message (Feature E & F: Protected by messageRateLimiter)
 router.post('/conversations/:id', messageRateLimiter, sendMessage);
-
-// 6. Mark conversation messages as read
 router.post('/conversations/:id/read', markConversationAsRead);
-
-// 7. Report an inappropriate or abusive message (Feature F: Abuse Reporting & Moderation)
 router.post('/messages/:messageId/report', reportRateLimiter, reportMessage);
+
+// 4. Recovery conversations
+router.get('/conversations/recovery/:recoveryId', getOrCreateConversationByRecovery);
+router.get('/recovery-conversations/:id', getRecoveryConversationById);
+router.post('/recovery-conversations/:id', messageRateLimiter, sendRecoveryMessage);
+router.post('/recovery-conversations/:id/read', markRecoveryConversationAsRead);
+router.post('/recovery-messages/:messageId/report', reportRateLimiter, reportRecoveryMessage);
 
 export default router;

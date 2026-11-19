@@ -16,7 +16,7 @@ export const protect = async (req, res, next) => {
         const decoded = verifyToken(token);
 
         const [rows] = await pool.query(
-            'SELECT id, name, email, phone, role, status FROM USERS WHERE id = ?',
+            'SELECT * FROM USERS WHERE id = ?',
             [decoded.id]
         );
 
@@ -24,10 +24,12 @@ export const protect = async (req, res, next) => {
             return res.status(401).json({ message: 'User no longer exists.' });
         }
 
-        if (rows[0].status !== 'ACTIVE') {
-            return res.status(401).json({ message: 'Account is inactive or banned.' });
+        if (rows[0].status === 'BANNED') {
+            return res.status(403).json({ message: 'Your account has been suspended. Please contact support.' });
         }
 
+        // Never leak password hash to req.user
+        delete rows[0].password_hash;
         req.user = rows[0];
         next();
     } catch (error) {

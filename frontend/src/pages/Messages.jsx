@@ -20,18 +20,43 @@ const formatMessageTime = (dateStr) => {
   return isToday ? time : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${time}`;
 };
 
+// Composite conversation identity helpers
+export const makeCompositeKey = (type, id) => `${(type || 'CLAIM').toLowerCase()}:${id}`;
+
+export const parseCompositeKey = (compositeKey) => {
+  if (!compositeKey) return { type: 'CLAIM', id: null, key: '' };
+  const parts = String(compositeKey).split(':');
+  if (parts.length === 2) {
+    const type = parts[0].toUpperCase() === 'RECOVERY' ? 'RECOVERY' : 'CLAIM';
+    const id = Number(parts[1]);
+    return { type, id, key: `${type.toLowerCase()}:${id}` };
+  }
+  const numId = Number(compositeKey);
+  return { type: 'CLAIM', id: numId, key: `claim:${numId}` };
+};
+
 const Messages = () => {
   const { user } = useAuth();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const claimIdParam = searchParams.get('claimId');
+  const recoveryIdParam = searchParams.get('recoveryId');
   const convIdParam = searchParams.get('convId');
+  const typeParam = searchParams.get('type');
+  const cParam = searchParams.get('c');
 
   const [conversations, setConversations] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [selectedConvId, setSelectedConvId] = useState(convIdParam ? Number(convIdParam) : null);
+  // Single source of truth for conversation identity: "claim:1", "recovery:1", etc.
+  const [selectedCompositeKey, setSelectedCompositeKey] = useState(() => {
+    if (cParam) return cParam;
+    if (convIdParam && typeParam) return makeCompositeKey(typeParam, convIdParam);
+    if (convIdParam) return makeCompositeKey('CLAIM', convIdParam);
+    return null;
+  });
+
   const [activeConversation, setActiveConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -51,6 +76,7 @@ const Messages = () => {
   const lastMessageCountRef = useRef(0);
   const lastMessageIdRef = useRef(null);
   const initialLoadConvRef = useRef(null);
+  const activeRequestRef = useRef(null);
 
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
 
@@ -79,8 +105,9 @@ const Messages = () => {
     if (!silent) setLoadingList(true);
     try {
       const res = await messageApi.getConversations();
-      setConversations(res.data || []);
-      return res.data || [];
+      const list = res.data || [];
+      setConversations(list);
+      return list;
     } catch (err) {
       if (!silent) toast('Failed to load conversations.', 'error');
       return [];
@@ -91,69 +118,128 @@ const Messages = () => {
 
   useEffect(() => {
     fetchConversations().then((convList) => {
-      // If navigated with claimId, get or create conversation
       if (claimIdParam) {
+        // Navigate via claim context: get or create claim conversation
         messageApi.getByClaimId(claimIdParam)
           .then((res) => {
             const cid = res.data.conversationId;
-            setSelectedConvId(cid);
-            setSearchParams({ convId: cid });
+            const key = makeCompositeKey('CLAIM', cid);
+            setSelectedCompositeKey(key);
             fetchConversations(true);
           })
           .catch(() => toast('Unable to access conversation for this claim.', 'error'));
-      } else if (!selectedConvId && convList.length > 0) {
+      } else if (recoveryIdParam) {
+        // Navigate via recovery context: get or create recovery conversation
+        messageApi.getByRecoveryId(recoveryIdParam)
+          .then((res) => {
+            const cid = res.data.conversationId;
+            const key = makeCompositeKey('RECOVERY', cid);
+            setSelectedCompositeKey(key);
+            fetchConversations(true);
+          })
+          .catch(() => toast('Unable to access conversation for this recovery.', 'error'));
+      } else if (cParam) {
+        setSelectedCompositeKey(cParam);
+      } else if (convIdParam && typeParam) {
+        setSelectedCompositeKey(makeCompositeKey(typeParam, convIdParam));
+      } else if (convIdParam) {
+        // Resolve legacy convIdParam against convList to pick correct type
+        const matched = convList.find(c => String(c.id) === String(convIdParam));
+        if (matched) {
+          const key = matched.compositeId || makeCompositeKey(matched.contextType, matched.id);
+          setSelectedCompositeKey(key);
+        } else {
+          setSelectedCompositeKey(makeCompositeKey('CLAIM', convIdParam));
+        }
+      } else if (!selectedCompositeKey && convList.length > 0) {
         // Select first conversation on desktop if none specified
         if (!isMobile) {
-          setSelectedConvId(convList[0].id);
+          const first = convList[0];
+          const key = first.compositeId || makeCompositeKey(first.contextType, first.id);
+          setSelectedCompositeKey(key);
         }
       }
     });
-  }, [claimIdParam]);
+  }, [claimIdParam, recoveryIdParam]);
 
-  // 2. Fetch active thread
-  const fetchThread = async (convId, silent = false) => {
-    if (!convId) return;
-    if (!silent) setLoadingThread(true);
+  // 2. Fetch active thread (dispatches to claim or recovery API based on composite key)
+  const fetchThread = async (compositeKey, silent = false) => {
+    if (!compositeKey) return;
+    const { type, id } = parseCompositeKey(compositeKey);
+    if (!id) return;
+
+    activeRequestRef.current = compositeKey;
+
+    if (!silent) {
+      setLoadingThread(true);
+      // Immediately clear old messages to prevent showing previous conversation
+      setMessages([]);
+      setActiveConversation(null);
+    }
+
     try {
-      const res = await messageApi.getConversationById(convId);
+      let res;
+      if (type === 'RECOVERY') {
+        res = await messageApi.getRecoveryConversationById(id);
+      } else {
+        res = await messageApi.getConversationById(id);
+      }
+
+      // Concurrency guard: verify response is still for the active conversation
+      if (activeRequestRef.current !== compositeKey) {
+        return;
+      }
+
       setActiveConversation(res.data.conversation);
       setMessages(res.data.messages || []);
 
       // Mark as read
-      messageApi.markAsRead(convId).catch(() => {});
-      // Optimistically update unread count in conversations list
+      if (type === 'RECOVERY') {
+        messageApi.markRecoveryAsRead(id).catch(() => {});
+      } else {
+        messageApi.markAsRead(id).catch(() => {});
+      }
+
+      // Optimistically update unread count for ONLY this composite conversation
       setConversations(prev =>
-        prev.map(c => c.id === convId ? { ...c, unreadCount: 0 } : c)
+        prev.map(c => {
+          const cKey = c.compositeId || makeCompositeKey(c.contextType, c.id);
+          return cKey === compositeKey ? { ...c, unreadCount: 0 } : c;
+        })
       );
     } catch (err) {
-      if (!silent) toast('Failed to load messages.', 'error');
+      if (activeRequestRef.current === compositeKey) {
+        if (!silent) toast('Failed to load messages.', 'error');
+      }
     } finally {
-      if (!silent) setLoadingThread(false);
+      if (activeRequestRef.current === compositeKey && !silent) {
+        setLoadingThread(false);
+      }
     }
   };
 
   useEffect(() => {
-    if (selectedConvId) {
+    if (selectedCompositeKey) {
       // Reset tracking refs when switching conversations
       lastMessageCountRef.current = 0;
       lastMessageIdRef.current = null;
       initialLoadConvRef.current = null;
-      fetchThread(selectedConvId);
-      setSearchParams({ convId: selectedConvId });
+      fetchThread(selectedCompositeKey);
+
+      const { type, id } = parseCompositeKey(selectedCompositeKey);
+      setSearchParams({ type: type.toLowerCase(), convId: id, c: selectedCompositeKey });
     }
-  }, [selectedConvId]);
+  }, [selectedCompositeKey]);
 
   // Auto-scroll inside container for initial conversation load and new incoming messages
-  // Strictly scrolls within messagesContainerRef — never touches browser window/page scroll
   useEffect(() => {
     if (messages.length === 0) return;
 
     const latestMsg = messages[messages.length - 1];
-    const isInitialLoad = initialLoadConvRef.current !== selectedConvId;
+    const isInitialLoad = initialLoadConvRef.current !== selectedCompositeKey;
 
     if (isInitialLoad) {
-      initialLoadConvRef.current = selectedConvId;
-      // Scroll container to bottom on conversation load without jumping the page
+      initialLoadConvRef.current = selectedCompositeKey;
       requestAnimationFrame(() => {
         if (messagesContainerRef.current) {
           messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
@@ -171,15 +257,15 @@ const Messages = () => {
 
     lastMessageCountRef.current = messages.length;
     lastMessageIdRef.current = latestMsg?.id;
-  }, [messages, selectedConvId]);
+  }, [messages, selectedCompositeKey]);
 
   // 3. Smart polling for new messages (every 4 seconds)
   useEffect(() => {
-    if (!selectedConvId) return;
+    if (!selectedCompositeKey) return;
 
     pollingRef.current = setInterval(() => {
-      if (!document.hidden && selectedConvId) {
-        fetchThread(selectedConvId, true);
+      if (!document.hidden && selectedCompositeKey) {
+        fetchThread(selectedCompositeKey, true);
         fetchConversations(true);
       }
     }, 4000);
@@ -187,33 +273,38 @@ const Messages = () => {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [selectedConvId]);
+  }, [selectedCompositeKey]);
 
-  // 4. Send Message
+  // 4. Send Message (dispatches to claim or recovery API based on composite key)
   const handleSendMessage = async (e) => {
     e?.preventDefault();
-    if (!newMessageText.trim() || sending || !selectedConvId) return;
+    if (!newMessageText.trim() || sending || !selectedCompositeKey) return;
+
+    const { type, id } = parseCompositeKey(selectedCompositeKey);
+    if (!id) return;
 
     const text = newMessageText.trim();
     setSending(true);
     try {
-      const res = await messageApi.sendMessage(selectedConvId, text);
+      let res;
+      if (type === 'RECOVERY') {
+        res = await messageApi.sendRecoveryMessage(id, text);
+      } else {
+        res = await messageApi.sendMessage(id, text);
+      }
       const sentMsg = res.data.data;
-      // Add message to list and update refs
-      setMessages(prev => {
-        const updated = [...prev, sentMsg];
-        lastMessageCountRef.current = updated.length;
-        lastMessageIdRef.current = sentMsg?.id;
-        return updated;
-      });
-      setNewMessageText('');
-
-      // Auto-scroll inside container to latest message
-      requestAnimationFrame(() => {
-        scrollContainerToBottom('smooth');
-      });
-
-      // Refresh list to show updated last_message_at
+      if (activeRequestRef.current === selectedCompositeKey) {
+        setMessages(prev => {
+          const updated = [...prev, sentMsg];
+          lastMessageCountRef.current = updated.length;
+          lastMessageIdRef.current = sentMsg?.id;
+          return updated;
+        });
+        setNewMessageText('');
+        requestAnimationFrame(() => {
+          scrollContainerToBottom('smooth');
+        });
+      }
       fetchConversations(true);
     } catch (err) {
       toast(err.response?.data?.message || 'Failed to send message.', 'error');
@@ -231,11 +322,16 @@ const Messages = () => {
 
   const handleReportSubmit = async (e) => {
     e.preventDefault();
-    if (!reportingMsg) return;
+    if (!reportingMsg || !selectedCompositeKey) return;
 
+    const { type } = parseCompositeKey(selectedCompositeKey);
     setSubmittingReport(true);
     try {
-      await messageApi.reportMessage(reportingMsg.id, reportReason, reportDetails);
+      if (type === 'RECOVERY') {
+        await messageApi.reportRecoveryMessage(reportingMsg.id, reportReason, reportDetails);
+      } else {
+        await messageApi.reportMessage(reportingMsg.id, reportReason, reportDetails);
+      }
       toast('Message reported to administration for review.', 'success');
       setReportedMessages(prev => ({ ...prev, [reportingMsg.id]: true }));
       setReportingMsg(null);
@@ -253,7 +349,8 @@ const Messages = () => {
     return (
       (c.itemTitle && c.itemTitle.toLowerCase().includes(q)) ||
       (c.otherParticipantName && c.otherParticipantName.toLowerCase().includes(q)) ||
-      String(c.claimId).includes(q)
+      String(c.claimId || '').includes(q) ||
+      String(c.recoveryId || '').includes(q)
     );
   });
 
@@ -267,10 +364,10 @@ const Messages = () => {
             Direct Communications
           </div>
           <h1 style={{ margin: '2px 0 0 0', fontSize: 'var(--font-size-2xl)', fontWeight: 800, color: 'var(--color-gray-900)' }}>
-            Claim Messages
+            Messages
           </h1>
           <p style={{ margin: '4px 0 0 0', fontSize: 'var(--font-size-sm)', color: 'var(--color-gray-500)' }}>
-            Communicate securely regarding item identification, proof of ownership, and handover coordination.
+            Communicate securely about claims and found item recoveries.
           </p>
         </div>
 
@@ -290,7 +387,7 @@ const Messages = () => {
           {/* LEFT SIDEBAR: Conversation List */}
           <div style={{
             borderRight: '1px solid var(--color-gray-200)',
-            display: selectedConvId && isMobile ? 'none' : 'flex',
+            display: selectedCompositeKey && isMobile ? 'none' : 'flex',
             flexDirection: 'column',
             background: '#F8FAFC',
             height: '100%',
@@ -328,22 +425,27 @@ const Messages = () => {
                   <div style={{ fontSize: 32, marginBottom: 8 }}>💬</div>
                   <div style={{ fontWeight: 600 }}>No conversations found</div>
                   <div style={{ fontSize: 11, marginTop: 4 }}>
-                    Start a chat from any active claim details page.
+                    Start a chat from any active claim or recovery details page.
                   </div>
                 </div>
               ) : (
                 filteredConversations.map(conv => {
-                  const isSelected = conv.id === selectedConvId;
+                  const compositeKey = conv.compositeId || makeCompositeKey(conv.contextType, conv.id);
+                  const isSelected = compositeKey === selectedCompositeKey;
+                  const isRecovery = conv.contextType === 'RECOVERY';
+                  const contextLabel = isRecovery
+                    ? `🎁 Recovery #${String(conv.recoveryId || conv.recovery_id).padStart(4, '0')}`
+                    : `🏷️ Claim #${String(conv.claimId || conv.claim_id).padStart(4, '0')}`;
                   return (
                     <div
-                      key={conv.id}
-                      onClick={() => setSelectedConvId(conv.id)}
+                      key={compositeKey}
+                      onClick={() => setSelectedCompositeKey(compositeKey)}
                       style={{
                         padding: '12px 14px',
                         borderBottom: '1px solid #E2E8F0',
                         cursor: 'pointer',
-                        background: isSelected ? '#EEF2FF' : '#fff',
-                        borderLeft: isSelected ? '4px solid var(--color-primary)' : '4px solid transparent',
+                        background: isSelected ? (isRecovery ? '#ECFDF5' : '#EEF2FF') : '#fff',
+                        borderLeft: isSelected ? `4px solid ${isRecovery ? '#10B981' : 'var(--color-primary)'}` : '4px solid transparent',
                         transition: 'all 0.15s ease'
                       }}
                     >
@@ -359,13 +461,13 @@ const Messages = () => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                         <span style={{
                           fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
-                          background: conv.otherParticipantRole === 'Finder' ? '#DBEAFE' : '#EDE9FE',
-                          color: conv.otherParticipantRole === 'Finder' ? '#1E40AF' : '#6D28D9'
+                          background: conv.otherParticipantRole === 'Finder' || conv.otherParticipantRole === 'Owner' ? '#DBEAFE' : '#EDE9FE',
+                          color: conv.otherParticipantRole === 'Finder' || conv.otherParticipantRole === 'Owner' ? '#1E40AF' : '#6D28D9'
                         }}>
                           {conv.otherParticipantRole}
                         </span>
                         <span style={{ fontSize: 11, color: 'var(--color-gray-500)', fontWeight: 600 }}>
-                          Claim #{String(conv.claimId).padStart(4, '0')} · {conv.itemTitle}
+                          {contextLabel} · {conv.itemTitle}
                         </span>
                       </div>
 
@@ -379,7 +481,7 @@ const Messages = () => {
                         </div>
                         {conv.unreadCount > 0 && (
                           <span style={{
-                            background: 'var(--color-primary)', color: '#fff', fontSize: 10, fontWeight: 800,
+                            background: isRecovery ? '#10B981' : 'var(--color-primary)', color: '#fff', fontSize: 10, fontWeight: 800,
                             padding: '2px 6px', borderRadius: 999, minWidth: 18, textAlign: 'center'
                           }}>
                             {conv.unreadCount}
@@ -395,14 +497,14 @@ const Messages = () => {
 
           {/* RIGHT WORKSPACE: Message Thread */}
           <div style={{
-            display: !selectedConvId && isMobile ? 'none' : 'flex',
+            display: !selectedCompositeKey && isMobile ? 'none' : 'flex',
             flexDirection: 'column',
             background: '#fff',
             height: '100%',
             minHeight: 0,
             overflow: 'hidden'
           }}>
-            {!selectedConvId || (!activeConversation && loadingThread) ? (
+            {!selectedCompositeKey || (!activeConversation && loadingThread) ? (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: 'var(--color-gray-400)', padding: 32 }}>
                 <span style={{ fontSize: 48, marginBottom: 12 }}>💬</span>
                 <h3 style={{ margin: 0, fontSize: 16, color: 'var(--color-gray-700)' }}>Select a conversation</h3>
@@ -426,7 +528,7 @@ const Messages = () => {
                     {/* Mobile Back Button */}
                     <button
                       type="button"
-                      onClick={() => setSelectedConvId(null)}
+                      onClick={() => setSelectedCompositeKey(null)}
                       style={{
                         display: isMobile ? 'block' : 'none',
                         background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', padding: 4
@@ -443,7 +545,7 @@ const Messages = () => {
                       />
                     ) : (
                       <div style={{ width: 40, height: 40, borderRadius: 8, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
-                        📦
+                        {activeConversation.contextType === 'RECOVERY' ? '🎁' : '📦'}
                       </div>
                     )}
 
@@ -454,12 +556,17 @@ const Messages = () => {
                         </span>
                         <span style={{
                           fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
-                          background: activeConversation.otherParticipantRole === 'Finder' ? '#DBEAFE' : '#EDE9FE',
-                          color: activeConversation.otherParticipantRole === 'Finder' ? '#1E40AF' : '#6D28D9'
+                          background: '#DBEAFE', color: '#1E40AF'
                         }}>
                           {activeConversation.otherParticipantRole}
                         </span>
-                        <StatusBadge status={activeConversation.claimStatus} />
+                        {activeConversation.contextType === 'RECOVERY' ? (
+                          <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: '#D1FAE5', color: '#065F46', fontWeight: 700 }}>
+                            {activeConversation.recoveryStatus}
+                          </span>
+                        ) : (
+                          <StatusBadge status={activeConversation.claimStatus} />
+                        )}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--color-gray-500)', marginTop: 2 }}>
                         Item: <strong>{activeConversation.itemTitle}</strong> ({activeConversation.itemCategory})
@@ -467,18 +574,30 @@ const Messages = () => {
                     </div>
                   </div>
 
-                  <Link
-                    to={`/claims/${activeConversation.claimId}`}
-                    style={{
-                      fontSize: 12, color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none',
-                      padding: '6px 12px', borderRadius: 6, background: '#EEF2FF'
-                    }}
-                  >
-                    View Claim #{String(activeConversation.claimId).padStart(4, '0')} →
-                  </Link>
+                  {activeConversation.contextType === 'RECOVERY' ? (
+                    <Link
+                      to={`/recoveries/${activeConversation.recoveryId}`}
+                      style={{
+                        fontSize: 12, color: '#065F46', fontWeight: 700, textDecoration: 'none',
+                        padding: '6px 12px', borderRadius: 6, background: '#D1FAE5'
+                      }}
+                    >
+                      View Recovery #{String(activeConversation.recoveryId).padStart(4, '0')} →
+                    </Link>
+                  ) : (
+                    <Link
+                      to={`/claims/${activeConversation.claimId}`}
+                      style={{
+                        fontSize: 12, color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none',
+                        padding: '6px 12px', borderRadius: 6, background: '#EEF2FF'
+                      }}
+                    >
+                      View Claim #{String(activeConversation.claimId).padStart(4, '0')} →
+                    </Link>
+                  )}
                 </div>
 
-                {/* Read-only Banner if claim rejected or withdrawn */}
+                {/* Read-only Banner */}
                 {activeConversation.isReadOnly && (
                   <div style={{
                     padding: '8px 16px', background: '#FEF2F2', borderBottom: '1px solid #FEE2E2',
@@ -486,7 +605,12 @@ const Messages = () => {
                     flexShrink: 0
                   }}>
                     <span>🔒</span>
-                    <span>This claim has been {activeConversation.claimStatus.toLowerCase()}. Messaging is closed. Existing history remains preserved for record-keeping.</span>
+                    <span>
+                      {activeConversation.contextType === 'RECOVERY'
+                        ? `This recovery submission has been ${(activeConversation.recoveryStatus || '').toLowerCase()}. Messaging is closed.`
+                        : `This claim has been ${(activeConversation.claimStatus || '').toLowerCase()}. Messaging is closed.`
+                      } Existing history is preserved for your records.
+                    </span>
                   </div>
                 )}
 

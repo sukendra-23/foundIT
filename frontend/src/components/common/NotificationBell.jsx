@@ -10,6 +10,12 @@ const TYPE_ICON = {
     MESSAGE_RECEIVED:        '💬',
     ADDITIONAL_INFO_REQUESTED: '❓',
     CLAIM_WITHDRAWN:         '↩️',
+    RECOVERY_SUBMITTED:      '🎁',
+    RECOVERY_UNDER_REVIEW:   '🔍',
+    RECOVERY_APPROVED:       '🎉',
+    RECOVERY_REJECTED:       '❌',
+    RECOVERY_REVOKED:        '⚠️',
+    RECOVERY_CANCELLED:      '↩️',
 };
 
 // ─── Relative time ───────────────────────────────────────────────────────────
