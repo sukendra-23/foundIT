@@ -18,6 +18,9 @@ import messageRoutes from './routes/messageRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import recoveryRoutes from './routes/recoveryRoutes.js';
 import adminRecoveryRoutes from './routes/adminRecoveryRoutes.js';
+import handoverRoutes from './routes/handoverRoutes.js';
+import adminHandoverRoutes from './routes/adminHandoverRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 import { getPublicStats } from './controllers/dashboardController.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { ensureTables } from './config/ensureTables.js';
@@ -49,6 +52,9 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/recoveries', recoveryRoutes);
 app.use('/api/admin/recoveries', adminRecoveryRoutes);
+app.use('/api', handoverRoutes);
+app.use('/api/admin/handovers', adminHandoverRoutes);
+app.use('/api/users', userRoutes);
 
 // Public platform stats (for Home page hero)
 app.get('/api/stats', getPublicStats);

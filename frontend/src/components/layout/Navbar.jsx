@@ -150,8 +150,12 @@ const Navbar = () => {
                       onClick={() => setDropdownOpen(o => !o)}
                       aria-expanded={dropdownOpen}
                     >
-                      <div className="user-avatar">
-                        {user.name.charAt(0).toUpperCase()}
+                      <div className="user-avatar" style={{ overflow: 'hidden' }}>
+                        {user.avatar_url ? (
+                          <img src={user.avatar_url} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          user.name.charAt(0).toUpperCase()
+                        )}
                       </div>
                       <span className="user-name hidden-mobile">{user.name.split(' ')[0]}</span>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
@@ -219,7 +223,13 @@ const Navbar = () => {
           {user ? (
             <div className="mobile-auth">
               <div className="mobile-user-info">
-                <div className="user-avatar">{user.name.charAt(0).toUpperCase()}</div>
+                <div className="user-avatar" style={{ overflow: 'hidden' }}>
+                  {user.avatar_url ? (
+                    <img src={user.avatar_url} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    user.name.charAt(0).toUpperCase()
+                  )}
+                </div>
                 <div>
                   <p style={{ fontWeight: 600, color: 'var(--color-gray-900)' }}>{user.name}</p>
                   <p style={{ fontSize: 12, color: 'var(--color-gray-500)' }}>{user.email}</p>

@@ -370,6 +370,26 @@ const RecoveryCard = ({ recovery, tab, onView }) => {
           )}
         </div>
 
+        {/* ── Handover Notification Banner for Approved Recoveries ──────── */}
+        {status === 'APPROVED' && (
+          <div style={{
+            marginBottom: 8,
+            padding: '6px 12px',
+            background: '#ECFDF5',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid #A7F3D0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: 12,
+            color: '#065F46',
+            fontWeight: 700
+          }}>
+            <span>🤝 Smart Handover Active</span>
+            <span style={{ fontSize: 11, color: '#059669' }}>Physical return open</span>
+          </div>
+        )}
+
         {/* ── Action Button ─────────────────────────────── */}
         <button
           onClick={() => onView(id)}

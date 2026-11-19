@@ -27,6 +27,8 @@ import AdminClaims from './pages/AdminClaims';
 import Messages from './pages/Messages';
 import MyRecoveries from './pages/MyRecoveries';
 import RecoveryDetails from './pages/RecoveryDetails';
+import HandoverDetails from './pages/HandoverDetails';
+import Profile from './pages/Profile';
 
 // ── Route Guards ──────────────────────────────────────────────────────
 
@@ -82,7 +84,8 @@ const AppRoutes = () => (
     <Route path="/messages"    element={<ProtectedRoute><Messages /></ProtectedRoute>} />
     <Route path="/my-recoveries" element={<ProtectedRoute><MyRecoveries /></ProtectedRoute>} />
     <Route path="/recoveries/:id" element={<ProtectedRoute><RecoveryDetails /></ProtectedRoute>} />
-    <Route path="/profile"     element={<ProtectedRoute><PlaceholderPage title="Profile" /></ProtectedRoute>} />
+    <Route path="/handovers/:handoverId" element={<ProtectedRoute><HandoverDetails /></ProtectedRoute>} />
+    <Route path="/profile"     element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
     {/* Admin */}
     <Route path="/admin" element={<AdminRoute><AdminClaims /></AdminRoute>} />

@@ -15,6 +15,11 @@ export const ToastProvider = ({ children }) => {
     }, duration);
   }, []);
 
+  addToast.success = useCallback((msg, dur) => addToast(msg, 'success', dur), [addToast]);
+  addToast.error = useCallback((msg, dur) => addToast(msg, 'error', dur), [addToast]);
+  addToast.warning = useCallback((msg, dur) => addToast(msg, 'warning', dur), [addToast]);
+  addToast.info = useCallback((msg, dur) => addToast(msg, 'info', dur), [addToast]);
+
   const removeToast = useCallback((id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);

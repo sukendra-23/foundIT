@@ -844,3 +844,235 @@ export const sendRecoveryDecisionEmail = async (toEmail, toName, itemTitle, reco
     console.error(`❌ [RECOVERY DECISION EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
     throw lastError;
 };
+
+/**
+ * Send Handover notification email (Location published, scheduled, return confirmed, etc.)
+ */
+export const sendHandoverEmail = async ({
+    toEmail,
+    toName,
+    subject,
+    title,
+    message,
+    itemTitle,
+    handoverId,
+    actionUrl,
+    actionText = 'View Handover Details',
+}) => {
+    if (isDevMode) {
+        console.log(`\n========================================`);
+        console.log(`[DEV MODE] Handover Email to: ${toEmail}`);
+        console.log(`Subject: ${subject}`);
+        console.log(`Title: ${title}`);
+        console.log(`Message: ${message}`);
+        console.log(`Action: ${actionUrl}`);
+        console.log(`========================================\n`);
+        return { mode: 'development', to: toEmail };
+    }
+
+    const htmlContent = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <h1 style="color: #4F46E5; margin: 0; font-size: 26px;">FoundiT</h1>
+                <p style="color: #64748B; margin: 4px 0 0; font-size: 13px;">Item Recovery & Handover</p>
+            </div>
+            <div style="background: #F8FAFC; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; border-left: 4px solid #4F46E5;">
+                <h3 style="margin: 0 0 8px; color: #1E293B; font-size: 18px;">${title}</h3>
+                <p style="margin: 0; color: #475569; font-size: 14px; line-height: 1.5;">${message}</p>
+            </div>
+            ${itemTitle ? `<p style="color: #64748B; font-size: 14px; margin: 12px 0;"><strong>Item:</strong> ${itemTitle}</p>` : ''}
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${actionUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/handovers/${handoverId}`}"
+                   style="display: inline-block; background: #4F46E5; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
+                    ${actionText} →
+                </a>
+            </div>
+            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
+            <p style="color: #94A3B8; font-size: 12px; text-align: center;">FoundiT Secure Smart Handover System</p>
+        </div>
+    `;
+
+    const MAX_ATTEMPTS = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            await axios.post(
+                'https://api.brevo.com/v3/smtp/email',
+                {
+                    sender: {
+                        name: process.env.EMAIL_FROM_NAME || 'FoundiT',
+                        email: process.env.EMAIL_FROM,
+                    },
+                    to: [{ email: toEmail, name: toName }],
+                    subject: subject || `FoundiT Handover Update: ${title}`,
+                    htmlContent,
+                },
+                {
+                    headers: {
+                        'api-key': process.env.BREVO_API_KEY,
+                        'Content-Type': 'application/json',
+                    },
+                    httpsAgent: brevoAgent,
+                    timeout: 10000,
+                }
+            );
+            console.log(`✅ [HANDOVER EMAIL] Sent to: ${toEmail} (${title})`);
+            return { mode: 'production', to: toEmail };
+        } catch (error) {
+            lastError = error;
+            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
+                const delayMs = attempt * 1000;
+                console.warn(`⚠️ [HANDOVER EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
+                await sleep(delayMs);
+                continue;
+            }
+            break;
+        }
+    }
+
+    console.error(`❌ [HANDOVER EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
+    return { mode: 'failed', error: lastError?.message };
+};
+
+/**
+ * Send Consolidated Handover Published Email to Owner
+ */
+export const sendConsolidatedHandoverPublishedEmail = async ({
+    toEmail,
+    toName,
+    itemTitle,
+    recoveryId,
+    handoverId,
+    finderName,
+    scheduleDate,
+    scheduleTime,
+    locationSummary,
+    hasContactShared,
+}) => {
+    const subject = 'FoundiT – Handover Details Published for Your Recovered Item';
+    const actionUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/handovers/${handoverId}`;
+
+    if (isDevMode) {
+        console.log(`\n========================================`);
+        console.log(`[DEV MODE] Consolidated Handover Published Email to: ${toEmail}`);
+        console.log(`Subject: ${subject}`);
+        console.log(`Item: ${itemTitle} (Recovery #${recoveryId})`);
+        console.log(`Finder: ${finderName}`);
+        console.log(`Location: ${locationSummary}`);
+        console.log(`Schedule: ${scheduleDate || 'Pending'} at ${scheduleTime || 'Pending'}`);
+        console.log(`Contact: ${hasContactShared ? 'Available' : 'In-App Only'}`);
+        console.log(`URL: ${actionUrl}`);
+        console.log(`========================================\n`);
+        return { mode: 'development', to: toEmail };
+    }
+
+    const htmlContent = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <h1 style="color: #2563EB; margin: 0; font-size: 26px; font-weight: 900;">FoundiT</h1>
+                <p style="color: #64748B; margin: 4px 0 0; font-size: 13px;">Item Recovery & Handover Coordination</p>
+            </div>
+            <div style="background: #EFF6FF; border-radius: 8px; padding: 18px 20px; margin-bottom: 20px; border-left: 4px solid #2563EB;">
+                <h3 style="margin: 0 0 8px; color: #1E3A8A; font-size: 18px;">Handover Details Published</h3>
+                <p style="margin: 0; color: #3B82F6; font-size: 14px; line-height: 1.5;">
+                    Finder <strong>${finderName}</strong> has published the handover meeting details for your recovered item.
+                </p>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 14px;">
+                <tr>
+                    <td style="padding: 8px 0; color: #64748B; width: 140px;">Item Name:</td>
+                    <td style="padding: 8px 0; font-weight: 700; color: #0F172A;">${itemTitle}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #64748B;">Recovery Ref:</td>
+                    <td style="padding: 8px 0; font-weight: 700; color: #0F172A;">#REC-${String(recoveryId).padStart(4, '0')}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #64748B;">Handover Method:</td>
+                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">In-Person Handover</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #64748B;">Meeting Location:</td>
+                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">${locationSummary || 'Location coordinates published on map'}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #64748B;">Proposed Schedule:</td>
+                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">${scheduleDate ? `${scheduleDate} at ${scheduleTime || ''}` : 'To be coordinated'}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #64748B;">Finder Contact:</td>
+                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">${hasContactShared ? 'Phone number provided in app' : 'Available via FoundiT Messages'}</td>
+                </tr>
+            </table>
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="${actionUrl}"
+                   style="display: inline-block; background: #2563EB; color: #ffffff; text-decoration: none; padding: 13px 32px; border-radius: 8px; font-weight: 800; font-size: 15px; box-shadow: 0 4px 12px rgba(37,99,235,0.25);">
+                    Review & Verify Handover Details →
+                </a>
+            </div>
+            <p style="color: #94A3B8; font-size: 12px; line-height: 1.5; text-align: center;">
+                For security reasons, sensitive live GPS coordinates are only visible when authenticated on FoundiT.
+            </p>
+            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 20px 0;" />
+            <p style="color: #94A3B8; font-size: 11px; text-align: center;">FoundiT Smart Handover & Return Verification System</p>
+        </div>
+    `;
+
+    return sendHandoverEmail({
+        toEmail,
+        toName,
+        subject,
+        title: 'Handover Details Ready',
+        message: `Finder ${finderName} has published the meeting location and schedule.`,
+        itemTitle,
+        handoverId,
+        actionUrl,
+        actionText: 'Review Handover Arrangements',
+    });
+};
+
+/**
+ * Send Return Confirmed Emails to Both Owner and Finder
+ */
+export const sendReturnCompletionEmails = async ({
+    ownerEmail,
+    ownerName,
+    finderEmail,
+    finderName,
+    itemTitle,
+    recoveryId,
+    handoverId,
+    completedAt = new Date(),
+}) => {
+    const feedbackUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/handovers/${handoverId}`;
+    const dateStr = new Date(completedAt).toLocaleDateString('en-US', { dateStyle: 'medium' });
+
+    // 1. Email to Owner
+    sendHandoverEmail({
+        toEmail: ownerEmail,
+        toName: ownerName,
+        subject: 'FoundiT – Your Lost Item Has Been Successfully Returned',
+        title: 'Your Lost Item Has Been Returned 🎉',
+        message: `Congratulations! Your item "${itemTitle}" (Recovery #${recoveryId}) has been successfully returned to you by finder ${finderName} on ${dateStr}. Please take a moment to rate your experience and send a note of appreciation.`,
+        itemTitle,
+        handoverId,
+        actionUrl: feedbackUrl,
+        actionText: 'Rate Finder & Leave Feedback',
+    }).catch(e => console.error('Error sending owner return email:', e.message));
+
+    // 2. Email to Finder
+    sendHandoverEmail({
+        toEmail: finderEmail,
+        toName: finderName,
+        subject: 'FoundiT – Your Handover Has Been Successfully Completed',
+        title: 'Thank You for Completing the Return! 🌟',
+        message: `Owner ${ownerName} has officially verified physical receipt of "${itemTitle}" (Recovery #${recoveryId}) on ${dateStr}. Thank you for your honesty and community spirit! Please share your feedback on the handover experience.`,
+        itemTitle,
+        handoverId,
+        actionUrl: feedbackUrl,
+        actionText: 'Rate Handover Experience',
+    }).catch(e => console.error('Error sending finder return email:', e.message));
+};
+
+

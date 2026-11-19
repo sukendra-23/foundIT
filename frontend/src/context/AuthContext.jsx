@@ -48,6 +48,18 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   }, []);
 
+  const updateUser = useCallback((updater) => {
+    setUser(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next) {
+        localStorage.setItem(USER_KEY, JSON.stringify(next));
+      } else {
+        localStorage.removeItem(USER_KEY);
+      }
+      return next;
+    });
+  }, []);
+
   const value = {
     user,
     token,
@@ -56,7 +68,7 @@ export const AuthProvider = ({ children }) => {
     isAdmin: user?.role === 'ADMIN',
     login,
     logout,
-    setUser, // allows profile updates
+    setUser: updateUser, // allows profile updates and syncs to localStorage
   };
 
   return (

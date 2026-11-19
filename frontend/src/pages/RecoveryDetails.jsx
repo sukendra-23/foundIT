@@ -5,6 +5,7 @@ import Footer from '../components/layout/Footer';
 import PageContainer from '../components/layout/PageContainer';
 import { PageLoader, Skeleton } from '../components/common/Loader';
 import { recoveryApi } from '../services/recoveryApi';
+import { handoverApi } from '../services/handoverApi';
 import { formatDate } from '../utils/formatters';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../components/common/Toast';
@@ -573,6 +574,10 @@ const RecoveryDetails = () => {
   // Image lightbox state
   const [enlargedImage, setEnlargedImage] = useState(null);
 
+  // Handover state
+  const [handoverData, setHandoverData] = useState(null);
+  const [initiatingHandover, setInitiatingHandover] = useState(false);
+
   // ── Fetch recovery details ─────────────────────────────────────────────────
   const fetchRecovery = useCallback(async () => {
     setLoading(true);
@@ -584,6 +589,17 @@ const RecoveryDetails = () => {
         setError('Recovery report not found.');
       } else {
         setRecovery(data);
+        if (data.status === 'APPROVED') {
+          try {
+            const hRes = await handoverApi.getByRecoveryId(id);
+            if (hRes.data?.handover) {
+              setHandoverData(hRes.data.handover);
+            }
+          } catch (hErr) {
+            // Handover not initiated yet
+            setHandoverData(null);
+          }
+        }
       }
     } catch (err) {
       setError(err.response?.data?.message || 'Recovery not found or access denied.');
@@ -615,6 +631,19 @@ const RecoveryDetails = () => {
       setCancelModalError(err.response?.data?.message || 'Failed to cancel submission.');
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleInitiateHandover = async () => {
+    setInitiatingHandover(true);
+    try {
+      const res = await handoverApi.initiate(id);
+      toast('Handover process initiated!', 'success');
+      navigate(`/handovers/${res.data.handoverId}`);
+    } catch (err) {
+      toast(err.response?.data?.message || 'Failed to initiate handover.', 'error');
+    } finally {
+      setInitiatingHandover(false);
     }
   };
 
@@ -1179,6 +1208,61 @@ const RecoveryDetails = () => {
                   <span>🔒</span>
                   <span>Message {isFinder ? 'Owner' : 'Finder'} (Locked)</span>
                 </button>
+              )}
+
+              {/* Handover Buttons when APPROVED */}
+              {recovery.status === 'APPROVED' && (
+                <>
+                  {handoverData ? (
+                    <Link
+                      to={`/handovers/${handoverData.id}`}
+                      style={{
+                        padding: '10px 24px',
+                        borderRadius: 'var(--radius-lg)',
+                        background: '#059669',
+                        color: '#fff',
+                        fontWeight: 700,
+                        fontSize: 14,
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: '0 3px 12px rgba(5, 150, 105, 0.28)',
+                      }}
+                    >
+                      <span>🤝</span>
+                      <span>
+                        {isOwner ? 'View Handover & Receive' : 'Track Handover'} ({handoverData.handover_status.replace(/_/g, ' ')})
+                      </span>
+                    </Link>
+                  ) : isFinder ? (
+                    <button
+                      onClick={handleInitiateHandover}
+                      disabled={initiatingHandover}
+                      style={{
+                        padding: '10px 24px',
+                        borderRadius: 'var(--radius-lg)',
+                        background: '#059669',
+                        color: '#fff',
+                        fontWeight: 700,
+                        fontSize: 14,
+                        border: 'none',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: '0 3px 12px rgba(5, 150, 105, 0.28)',
+                      }}
+                    >
+                      <span>🤝</span>
+                      <span>{initiatingHandover ? 'Initiating...' : 'Initiate Handover & Location'}</span>
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 13, color: '#059669', fontWeight: 600, background: '#ECFDF5', padding: '8px 14px', borderRadius: 8 }}>
+                      ⏳ Waiting for finder to set handover details
+                    </span>
+                  )}
+                </>
               )}
 
               {/* Cancel Submission Button (Only available to finder while PENDING) */}
