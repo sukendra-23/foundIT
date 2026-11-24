@@ -1,7 +1,37 @@
 import axios from 'axios';
 
+// Centralized API configuration
+// Resolves the backend API base URL from the environment (defaulting to local backend if unset)
+const resolveBaseUrl = () => {
+  let url = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').trim();
+  // Strip enclosing quotes if passed in deployment settings
+  url = url.replace(/^["']|["']$/g, '');
+
+  // Guard: if protocol is missing (e.g. naked domain 'foundit-backend-production-f8a31442.up.railway.app/api'),
+  // prepend https:// so browser does not treat it as a relative path and prepend window.location.origin
+  if (url && !/^https?:\/\//i.test(url)) {
+    if (url.startsWith('//')) {
+      url = `https:${url}`;
+    } else if (!url.startsWith('/')) {
+      url = `https://${url}`;
+    }
+  }
+
+  // Remove trailing slashes
+  url = url.replace(/\/+$/, '');
+
+  // Ensure /api suffix is present
+  if (!url.endsWith('/api')) {
+    url = `${url}/api`;
+  }
+
+  return url;
+};
+
+const API_BASE_URL = resolveBaseUrl();
+
 const api = axios.create({
-  baseURL: `${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}`,
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -36,4 +66,5 @@ api.interceptors.response.use(
   }
 );
 
+export { API_BASE_URL };
 export default api;
