@@ -32,11 +32,49 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ─── Middleware ───────────────────────────────────────────────────────
-app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+// ─── CORS Configuration ────────────────────────────────────────────────
+const defaultAllowedOrigins = [
+    'https://foundit-production-2e271b5d.up.railway.app',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:5173',
+];
+
+const allowedOrigins = [...defaultAllowedOrigins];
+
+if (process.env.FRONTEND_URL) {
+    process.env.FRONTEND_URL.split(',').forEach((item) => {
+        const clean = item.trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+        if (clean && !allowedOrigins.includes(clean)) {
+            allowedOrigins.push(clean);
+        }
+    });
+}
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server health checks)
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        const normalized = origin.trim().replace(/\/+$/, '');
+        if (allowedOrigins.includes(normalized)) {
+            return callback(null, true);
+        }
+
+        console.warn(`⚠️ [CORS] Blocked request from unauthorized origin: ${origin}`);
+        return callback(null, false);
+    },
     credentials: true,
-}));
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    exposedHeaders: ['Retry-After'],
+    optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
