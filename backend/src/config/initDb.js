@@ -1,124 +1,94 @@
-import dns from "dns";
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import pool from './db.js';
+import { ensureTables } from './ensureTables.js';
 
-dns.setDefaultResultOrder("ipv4first");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import pool from './config/db.js';
-import authRoutes from './routes/authRoutes.js';
-import dashboardRoutes from './routes/dashboardRoutes.js';
-import lostItemRoutes from './routes/lostItemRoutes.js';
-import foundItemRoutes from './routes/foundItemRoutes.js';
-import matchRoutes from './routes/matchRoutes.js';
-import searchRoutes from './routes/searchRoutes.js';
-import claimRoutes from './routes/claimRoutes.js';
-import adminClaimRoutes from './routes/adminClaimRoutes.js';
-import messageRoutes from './routes/messageRoutes.js';
-import notificationRoutes from './routes/notificationRoutes.js';
-import recoveryRoutes from './routes/recoveryRoutes.js';
-import adminRecoveryRoutes from './routes/adminRecoveryRoutes.js';
-import handoverRoutes from './routes/handoverRoutes.js';
-import adminHandoverRoutes from './routes/adminHandoverRoutes.js';
-import userRoutes from './routes/userRoutes.js';
-import { getPublicStats } from './controllers/dashboardController.js';
-import { errorHandler } from './middleware/errorHandler.js';
-import { initializeDatabase } from './config/initDb.js';
-import { ensureTables } from './config/ensureTables.js';
+/**
+ * Initializes the database by executing schema.sql and running ensureTables()
+ * Safe and idempotent. Used both at server startup and via `npm run setup-db`.
+ */
+export async function initializeDatabase() {
+    console.log('🚀 [initDb] Starting database initialization...');
 
+    // Step 1: Verify database connection
+    console.log('⏳ [initDb] Verifying database connectivity...');
+    await pool.query('SELECT 1');
+    console.log('✅ [initDb] Database connectivity confirmed.');
 
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT || 5000;
-
-// ─── Middleware ───────────────────────────────────────────────────────
-app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-    credentials: true,
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// ─── Routes ──────────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/lost-items', lostItemRoutes);
-app.use('/api/found-items', foundItemRoutes);
-app.use('/api/matches', matchRoutes);
-app.use('/api/search', searchRoutes);
-app.use('/api/claims', claimRoutes);
-app.use('/api/admin/claims', adminClaimRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/recoveries', recoveryRoutes);
-app.use('/api/admin/recoveries', adminRecoveryRoutes);
-app.use('/api', handoverRoutes);
-app.use('/api/admin/handovers', adminHandoverRoutes);
-app.use('/api/users', userRoutes);
-
-// Public platform stats (for Home page hero)
-app.get('/api/stats', getPublicStats);
-
-// Health check
-app.get('/api/health', async (req, res) => {
-    try {
-        await pool.query('SELECT 1');
-        res.status(200).json({ status: 'ok', message: 'Backend and Database are running perfectly!' });
-    } catch (error) {
-        res.status(500).json({ status: 'error', message: 'Database connection failed.' });
+    // Step 2: Read schema.sql
+    const schemaPath = path.join(__dirname, 'schema.sql');
+    if (!fs.existsSync(schemaPath)) {
+        throw new Error(`[initDb] schema.sql not found at expected path: ${schemaPath}`);
     }
-});
 
-// ─── 404 ─────────────────────────────────────────────────────────────
-app.use((req, res) => {
-    res.status(404).json({ message: `Route not found: ${req.method} ${req.url}` });
-});
+    console.log(`📄 [initDb] Reading schema from ${schemaPath}...`);
+    const schemaRaw = fs.readFileSync(schemaPath, 'utf8');
 
-// ─── Multer Error Handler ─────────────────────────────────────────────
-app.use((err, req, res, next) => {
-    // Multer file size / type errors
-    if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ message: 'File too large. Maximum size is 5MB per image.' });
+    // Step 3: Parse and execute schema.sql statements
+    const statements = schemaRaw
+        .replace(/--.*$/gm, '')
+        .split(';')
+        .map(stmt => stmt.trim())
+        .filter(stmt => stmt.length > 0);
+
+    console.log(`⏳ [initDb] Executing ${statements.length} SQL statement(s) from schema.sql...`);
+    for (let i = 0; i < statements.length; i++) {
+        const stmt = statements[i];
+        try {
+            await pool.query(stmt);
+        } catch (stmtErr) {
+            console.error(`\n❌ [initDb] Failed executing statement #${i + 1}:`);
+            console.error(stmt);
+            console.error(`\nError: ${stmtErr.message}\n`);
+            throw stmtErr;
+        }
     }
-    if (err.code === 'LIMIT_FILE_COUNT') {
-        return res.status(400).json({ message: 'Too many files. Maximum is 5 images per report.' });
+    console.log('✅ [initDb] All base tables from schema.sql created/verified successfully.');
+
+    // Step 4: Verify prerequisite base tables exist
+    const requiredTables = ['USERS', 'LOST_ITEMS', 'FOUND_ITEMS', 'MATCHES', 'CLAIMS'];
+    const [tablesCheck] = await pool.query(
+        `SELECT TABLE_NAME FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)`,
+        [requiredTables]
+    );
+    const existingSet = new Set(tablesCheck.map(r => r.TABLE_NAME));
+    const missingTables = requiredTables.filter(t => !existingSet.has(t));
+    if (missingTables.length > 0) {
+        throw new Error(`[initDb] Prerequisite tables missing after schema execution: ${missingTables.join(', ')}`);
     }
-    if (err.message && err.message.includes('Unsupported file format')) {
-        return res.status(422).json({ message: err.message });
-    }
-    next(err);
-});
+    console.log('✅ [initDb] Prerequisite base tables verified.');
 
-// ─── Error Handler (must be last) ────────────────────────────────────
-app.use(errorHandler);
+    // Step 5: Run ensureTables() for Phase 7 & 8 tables and migrations
+    console.log('⏳ [initDb] Running ensureTables() bootstrap & verification...');
+    await ensureTables();
+    console.log('✅ [initDb] ensureTables() completed successfully.');
 
-// ─── Startup Sequence ────────────────────────────────────────────────
-const startServer = async () => {
-    try {
-        console.log('⏳ Connecting to database...');
-        await pool.query('SELECT 1');
-        console.log('✅ Database connected successfully.');
+    console.log('🎉 [initDb] Database initialization finished successfully.');
+}
 
-        console.log('⏳ Checking and initializing base database schema and tables...');
-        await initializeDatabase();
-        console.log('✅ Database schema and tables verified successfully.');
+// Standalone execution support (e.g., `npm run setup-db` or `node src/config/initDb.js`)
+const isDirectRun = process.argv[1] && (
+    fileURLToPath(import.meta.url) === path.resolve(process.argv[1]) ||
+    process.argv[1].endsWith('initDb.js')
+);
 
-        app.listen(PORT, () => {
-            console.log(`✅ Server running at http://localhost:${PORT}`);
-            console.log(`   Auth  → /api/auth`);
-            console.log(`   Dashboard → /api/dashboard`);
-            console.log(`   Health → /api/health`);
+if (isDirectRun) {
+    initializeDatabase()
+        .then(async () => {
+            console.log('🎉 [initDb] Standalone setup complete.');
+            await pool.end();
+            process.exit(0);
+        })
+        .catch(async (error) => {
+            console.error('❌ [initDb] Standalone setup failed:', error.message);
+            try {
+                await pool.end();
+            } catch (_) {}
+            process.exit(1);
         });
-    } catch (error) {
-        console.error('❌ Failed to start server due to database or table initialization error:');
-        console.error(`   Message: ${error.message || '(no message)'}`);
-        if (error.code)    console.error(`   Code   : ${error.code}`);
-        if (error.errno)   console.error(`   Errno  : ${error.errno}`);
-        if (error.address) console.error(`   Address: ${error.address}`);
-        if (error.port)    console.error(`   Port   : ${error.port}`);
-        process.exit(1);
-    }
-};
-
-startServer();
+}
