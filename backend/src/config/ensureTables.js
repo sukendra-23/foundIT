@@ -10,7 +10,19 @@ import pool from './db.js';
  */
 export const ensureTables = async () => {
     try {
-        console.log('🔄 Checking and verifying Phase 7 database tables...');
+        console.log('🔄 Checking and verifying database tables...');
+
+        // Verify base prerequisite tables exist before verifying columns or creating dependent child tables
+        const [baseCheck] = await pool.query(
+            `SELECT TABLE_NAME FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('USERS', 'CLAIMS')`
+        );
+        const baseNames = new Set(baseCheck.map(r => r.TABLE_NAME));
+        const missingBase = ['USERS', 'CLAIMS'].filter(t => !baseNames.has(t));
+
+        if (missingBase.length > 0) {
+            throw new Error(`Prerequisite base table(s) missing: ${missingBase.join(', ')}. Please run schema initialization (npm run setup-db) before starting the server.`);
+        }
 
         // 0. Ensure USERS has avatar_url column
         try {
@@ -24,6 +36,7 @@ export const ensureTables = async () => {
             }
         } catch (colErr) {
             console.error('⚠️ Could not verify/add avatar_url column:', colErr.message);
+            throw colErr;
         }
 
         // 1. CLAIM_CONVERSATIONS
@@ -134,8 +147,7 @@ export const ensureTables = async () => {
 
         if (missing.length > 0) {
             console.error(`\n❌ [ensureTables] Phase 7 Recovery Workflow tables missing: ${missing.join(', ')}`);
-            console.error('👉 Please run the authoritative migration: node migrations/08_phase7_recovery_workflow.js\n');
-            process.exit(1);
+            throw new Error(`Missing required Phase 7 recovery tables: ${missing.join(', ')}. Please ensure schema.sql is applied before starting the server.`);
         }
         console.log('✅ Phase 7 Recovery Workflow tables verified and active.');
 
@@ -244,6 +256,16 @@ export const ensureTables = async () => {
         `);
         // 7. Ensure Handover Enhancements & Feedback Table (Migration 10)
         try {
+            // Verify RECOVERY_HANDOVERS exists before executing enhancements
+            const [handoverTableCheck] = await pool.query(`
+                SELECT TABLE_NAME FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'RECOVERY_HANDOVERS'
+            `);
+
+            if (handoverTableCheck.length === 0) {
+                throw new Error("Cannot apply handover enhancements: RECOVERY_HANDOVERS table does not exist.");
+            }
+
             // 7a. Add 'VERIFIED' to the handover_status ENUM if not present
             try {
                 const [enumRows] = await pool.query(`
@@ -266,6 +288,7 @@ export const ensureTables = async () => {
                 }
             } catch (enumErr) {
                 console.error('⚠️ Could not verify/add VERIFIED ENUM value:', enumErr.message);
+                throw enumErr;
             }
 
             const [hCols] = await pool.query(`
@@ -306,10 +329,12 @@ export const ensureTables = async () => {
             `);
         } catch (enhErr) {
             console.error('⚠️ Could not verify/add handover enhancement columns/tables:', enhErr.message);
+            throw enhErr;
         }
 
         console.log('✅ Smart Handover tables verified and active.');
     } catch (error) {
         console.error('⚠️ [ensureTables] Error during table bootstrap / verification:', error.message);
+        throw error;
     }
 };

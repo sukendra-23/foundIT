@@ -1,0 +1,839 @@
+﻿===== db.js =====
+import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  multipleStatements: true // Required for running schema.sql
+});
+
+export default pool;
+===== initDb.js =====
+import fs from 'fs';
+import path from 'path';
+import bcrypt from 'bcryptjs';
+import { fileURLToPath } from 'url';
+import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function initializeDatabase() {
+    let rootConn;
+
+    try {
+        // ----------------------------------------------------------------
+        // STEP 1: Connect as root (no specific database yet)
+        // ----------------------------------------------------------------
+        console.log('Connecting to MySQL as root...');
+        rootConn = await mysql.createConnection({
+            host: process.env.DB_HOST,
+            port: process.env.DB_PORT,
+            user: process.env.DB_ROOT_USER,
+            password: process.env.DB_ROOT_PASSWORD,
+        });
+        console.log('Root connection successful.');
+
+        // ----------------------------------------------------------------
+        // STEP 2: Create the database if it does not exist
+        // ----------------------------------------------------------------
+        const dbName = process.env.DB_NAME;
+        await rootConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+        console.log(`Database '${dbName}' is ready.`);
+
+        // ----------------------------------------------------------------
+        // STEP 3: Create the app user and grant privileges (idempotent)
+        // ----------------------------------------------------------------
+        const appUser = process.env.DB_USER;
+        const appPass = process.env.DB_PASSWORD;
+
+        // DROP the user if it already exists so we can re-create cleanly
+        const [existingUsers] = await rootConn.query(
+            `SELECT User FROM mysql.user WHERE User = ? AND Host = 'localhost'`,
+            [appUser]
+        );
+
+        if (existingUsers.length === 0) {
+            await rootConn.query(
+                `CREATE USER '${appUser}'@'localhost' IDENTIFIED BY '${appPass}'`
+            );
+            console.log(`App user '${appUser}' created.`);
+        } else {
+            // Update the password in case it changed in .env
+            await rootConn.query(
+                `ALTER USER '${appUser}'@'localhost' IDENTIFIED BY '${appPass}'`
+            );
+            console.log(`App user '${appUser}' already exists â€” password refreshed.`);
+        }
+
+        await rootConn.query(
+            `GRANT ALL PRIVILEGES ON \`${dbName}\`.* TO '${appUser}'@'localhost'`
+        );
+        await rootConn.query('FLUSH PRIVILEGES');
+        console.log(`Privileges granted to '${appUser}' on '${dbName}'.`);
+
+        await rootConn.end();
+        rootConn = null;
+
+        // ----------------------------------------------------------------
+        // STEP 4: Connect as the app user and run schema
+        // ----------------------------------------------------------------
+        console.log(`\nConnecting as app user '${appUser}' to run schema...`);
+        const appConn = await mysql.createConnection({
+            host: process.env.DB_HOST,
+            port: process.env.DB_PORT,
+            user: appUser,
+            password: appPass,
+            database: dbName,
+            multipleStatements: true,
+        });
+
+        const schemaPath = path.join(__dirname, 'schema.sql');
+        const schema = fs.readFileSync(schemaPath, 'utf8');
+        await appConn.query(schema);
+        console.log('All tables created/verified successfully.');
+
+        // ----------------------------------------------------------------
+        // STEP 5: Seed the initial Admin user (idempotent)
+        // ----------------------------------------------------------------
+        const adminEmail = 'admin@lostandfound.com';
+        const [rows] = await appConn.query(
+            'SELECT id FROM USERS WHERE email = ?',
+            [adminEmail]
+        );
+
+        if (rows.length === 0) {
+            console.log('\nSeeding initial admin user...');
+            const passwordHash = await bcrypt.hash('Admin@1234', 10);
+            await appConn.query(
+                `INSERT INTO USERS (name, email, phone, password_hash, role, email_verified, phone_verified)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                ['System Admin', adminEmail, '+0000000000', passwordHash, 'ADMIN', true, true]
+            );
+            console.log('Admin user seeded successfully.');
+            console.log('  Email   : admin@lostandfound.com');
+            console.log('  Password: Admin@1234  (change this after first login)');
+        } else {
+            console.log('Admin user already exists â€” skipping seed.');
+        }
+
+        await appConn.end();
+        console.log('\nDatabase initialization complete!');
+
+    } catch (error) {
+        console.error('\nError during database initialization:', error.message);
+        if (rootConn) await rootConn.end();
+    }
+}
+
+initializeDatabase();
+===== schema.sql =====
+-- USERS table
+CREATE TABLE IF NOT EXISTS USERS (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    phone VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role ENUM('USER', 'ADMIN') DEFAULT 'USER',
+    status ENUM('ACTIVE', 'INACTIVE', 'BANNED') DEFAULT 'ACTIVE',
+    email_verified BOOLEAN DEFAULT FALSE,
+    phone_verified BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- OTP_VERIFICATIONS table
+CREATE TABLE IF NOT EXISTS OTP_VERIFICATIONS (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    otp_hash VARCHAR(255) NOT NULL,
+    attempts INT DEFAULT 0,
+    expires_at DATETIME NOT NULL,
+    status ENUM('PENDING', 'VERIFIED', 'EXPIRED') DEFAULT 'PENDING',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE
+);
+
+-- PASSWORD_RESET_TOKENS table (Dedicated to password reset challenge lifecycle)
+CREATE TABLE IF NOT EXISTS PASSWORD_RESET_TOKENS (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    user_id         INT NOT NULL,
+    otp_hash        VARCHAR(255) NOT NULL,
+    reset_token     VARCHAR(500) NULL,
+    attempts        INT DEFAULT 0,
+    expires_at      DATETIME NOT NULL,
+    consumed        BOOLEAN DEFAULT FALSE,
+    revoked         BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
+    INDEX idx_expires (expires_at)
+);
+
+-- LOST_ITEMS table
+CREATE TABLE IF NOT EXISTS LOST_ITEMS (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    description TEXT,
+    brand VARCHAR(100),
+    model VARCHAR(100),
+    color VARCHAR(50),
+    identifying_details TEXT,
+    location VARCHAR(255) NOT NULL,
+    lost_date DATE NOT NULL,
+    lost_time TIME,
+    status ENUM('OPEN', 'MATCHED', 'RETURNED', 'CLOSED') DEFAULT 'OPEN',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE
+);
+
+-- FOUND_ITEMS table
+CREATE TABLE IF NOT EXISTS FOUND_ITEMS (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL,
+    description TEXT,
+    brand VARCHAR(100),
+    model VARCHAR(100),
+    color VARCHAR(50),
+    identifying_details TEXT,
+    location VARCHAR(255) NOT NULL,
+    found_date DATE NOT NULL,
+    found_time TIME,
+    status ENUM('OPEN', 'MATCHED', 'RETURNED', 'CLOSED') DEFAULT 'OPEN',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE
+);
+
+-- ITEM_IMAGES table
+CREATE TABLE IF NOT EXISTS ITEM_IMAGES (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    lost_item_id INT NULL,
+    found_item_id INT NULL,
+    image_url TEXT NOT NULL,
+    public_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_item_type CHECK (
+        (lost_item_id IS NOT NULL AND found_item_id IS NULL) OR
+        (found_item_id IS NOT NULL AND lost_item_id IS NULL)
+    ),
+    FOREIGN KEY (lost_item_id) REFERENCES LOST_ITEMS(id) ON DELETE CASCADE,
+    FOREIGN KEY (found_item_id) REFERENCES FOUND_ITEMS(id) ON DELETE CASCADE
+);
+
+-- CLAIMS table (Phase 6: Ownership Verification Workflow)
+CREATE TABLE IF NOT EXISTS CLAIMS (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    found_item_id INT NOT NULL,
+    claimant_id INT NOT NULL,
+    lost_item_id INT NULL,
+    match_id INT NULL,
+    claim_reason VARCHAR(255) NULL,
+    ownership_details TEXT NULL,
+    identifying_marks TEXT NULL,
+    lost_date_claimed DATE NULL,
+    lost_location_claimed VARCHAR(255) NULL,
+    proof_description TEXT NULL,
+    status ENUM('PENDING', 'FINDER_REVIEW', 'ADMIN_REVIEW', 'APPROVED', 'REJECTED', 'WITHDRAWN') DEFAULT 'PENDING',
+    finder_response VARCHAR(50) NULL,
+    finder_notes TEXT NULL,
+    finder_responded_at DATETIME NULL,
+    additional_info_requested BOOLEAN DEFAULT FALSE,
+    additional_info_provided TEXT NULL,
+    admin_notes TEXT NULL,
+    decision_reason TEXT NULL,
+    reviewed_by INT NULL,
+    reviewed_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (found_item_id) REFERENCES FOUND_ITEMS(id) ON DELETE CASCADE,
+    FOREIGN KEY (claimant_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    FOREIGN KEY (lost_item_id) REFERENCES LOST_ITEMS(id) ON DELETE SET NULL,
+    FOREIGN KEY (match_id) REFERENCES MATCHES(id) ON DELETE SET NULL,
+    FOREIGN KEY (reviewed_by) REFERENCES USERS(id) ON DELETE SET NULL
+);
+
+-- CLAIM_EVIDENCE table (Private evidence attachments)
+CREATE TABLE IF NOT EXISTS CLAIM_EVIDENCE (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    claim_id INT NOT NULL,
+    image_url TEXT NOT NULL,
+    public_id VARCHAR(255) NOT NULL,
+    file_type VARCHAR(50) DEFAULT 'image',
+    description VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES CLAIMS(id) ON DELETE CASCADE
+);
+
+-- CLAIM_AUDIT_LOGS table (Immutable status & review history)
+CREATE TABLE IF NOT EXISTS CLAIM_AUDIT_LOGS (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    claim_id INT NOT NULL,
+    performed_by INT NOT NULL,
+    from_status VARCHAR(50) NULL,
+    to_status VARCHAR(50) NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    notes TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES CLAIMS(id) ON DELETE CASCADE,
+    FOREIGN KEY (performed_by) REFERENCES USERS(id) ON DELETE CASCADE
+);
+
+-- MATCHES table
+CREATE TABLE IF NOT EXISTS MATCHES (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    lost_item_id INT NOT NULL,
+    found_item_id INT NOT NULL,
+    score DECIMAL(5, 2) DEFAULT 0.00,
+    status ENUM('SUGGESTED', 'CONFIRMED', 'DISMISSED') DEFAULT 'SUGGESTED',
+    reviewed_by INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (lost_item_id) REFERENCES LOST_ITEMS(id) ON DELETE CASCADE,
+    FOREIGN KEY (found_item_id) REFERENCES FOUND_ITEMS(id) ON DELETE CASCADE,
+    FOREIGN KEY (reviewed_by) REFERENCES USERS(id) ON DELETE SET NULL
+);
+
+-- MESSAGES / CONVERSATIONS (Phase 7: In-App Messaging)
+CREATE TABLE IF NOT EXISTS CLAIM_CONVERSATIONS (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    claim_id        INT NOT NULL UNIQUE,
+    claimant_id     INT NOT NULL,
+    finder_id       INT NOT NULL,
+    last_message_at TIMESTAMP NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (claim_id) REFERENCES CLAIMS(id) ON DELETE CASCADE,
+    FOREIGN KEY (claimant_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    FOREIGN KEY (finder_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    INDEX idx_claim (claim_id),
+    INDEX idx_claimant (claimant_id),
+    INDEX idx_finder (finder_id),
+    INDEX idx_last_message (last_message_at)
+);
+
+CREATE TABLE IF NOT EXISTS CLAIM_MESSAGES (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    conversation_id INT NOT NULL,
+    sender_id       INT NOT NULL,
+    message_text    TEXT NOT NULL,
+    is_read         BOOLEAN DEFAULT FALSE,
+    read_at         DATETIME NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES CLAIM_CONVERSATIONS(id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    INDEX idx_conversation (conversation_id),
+    INDEX idx_sender (sender_id),
+    INDEX idx_created (created_at),
+    INDEX idx_read (is_read)
+);
+
+-- USER_NOTIFICATIONS table (Phase 7 Step 2: In-App Notification Bell)
+CREATE TABLE IF NOT EXISTS USER_NOTIFICATIONS (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    user_id     INT NOT NULL,
+    type        VARCHAR(50) NOT NULL COMMENT 'CLAIM_SUBMITTED | CLAIM_DECISION | FINDER_REVIEW_REQUESTED | MESSAGE_RECEIVED | ADDITIONAL_INFO_REQUESTED | CLAIM_WITHDRAWN',
+    title       VARCHAR(255) NOT NULL,
+    body        TEXT,
+    link        VARCHAR(500) COMMENT 'Frontend route e.g. /claims/5',
+    is_read     BOOLEAN DEFAULT FALSE,
+    read_at     DATETIME NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_user    (user_id),
+    INDEX idx_read    (is_read),
+    INDEX idx_created (created_at),
+    FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- MESSAGE_REPORTS (Phase 7 Feature F: Abuse & Moderation)
+CREATE TABLE IF NOT EXISTS MESSAGE_REPORTS (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    message_id       INT NOT NULL,
+    conversation_id  INT NOT NULL,
+    reporter_id      INT NOT NULL,
+    reported_user_id INT NOT NULL,
+    reason           VARCHAR(50) NOT NULL COMMENT 'HARASSMENT | SPAM | SCAM_FRAUD | INAPPROPRIATE | OTHER',
+    details          TEXT NULL,
+    status           VARCHAR(30) DEFAULT 'PENDING' COMMENT 'PENDING | REVIEWED | DISMISSED | ACTION_TAKEN',
+    reviewed_by      INT NULL,
+    reviewed_at      DATETIME NULL,
+    admin_notes      TEXT NULL,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_msg           (message_id),
+    INDEX idx_conv          (conversation_id),
+    INDEX idx_reporter      (reporter_id),
+    INDEX idx_reported_user (reported_user_id),
+    INDEX idx_status        (status),
+    FOREIGN KEY (message_id) REFERENCES CLAIM_MESSAGES(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES CLAIM_CONVERSATIONS(id) ON DELETE CASCADE,
+    FOREIGN KEY (reporter_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    FOREIGN KEY (reported_user_id) REFERENCES USERS(id) ON DELETE CASCADE,
+    FOREIGN KEY (reviewed_by) REFERENCES USERS(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- PHASE 7 EXTENSION: LOST ITEM RECOVERY WORKFLOW TABLES
+-- ============================================================================
+
+-- 1. RECOVERY_SUBMISSIONS: Dedicated entity for finders reporting a match on a lost item
+CREATE TABLE IF NOT EXISTS RECOVERY_SUBMISSIONS (
+    id                      INT AUTO_INCREMENT PRIMARY KEY,
+    lost_item_id            INT NOT NULL,
+    finder_id               INT NOT NULL,
+    item_name               VARCHAR(255) NOT NULL,
+    brand                   VARCHAR(100) NULL,
+    model                   VARCHAR(100) NULL,
+    color                   VARCHAR(50) NULL,
+    identifying_marks       TEXT NULL,
+    found_date              DATE NOT NULL,
+    found_time              TIME NULL,
+    found_location          VARCHAR(255) NOT NULL,
+    city                    VARCHAR(100) NULL,
+    location_description   TEXT NULL,
+    item_condition          VARCHAR(100) NULL,
+    additional_information  TEXT NULL,
+    status                  ENUM('PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
+    decision_reason         TEXT NULL COMMENT 'Public decision reason visible only to finder, owner, and admin',
+    admin_notes             TEXT NULL COMMENT 'Strictly confidential internal notes for administrators',
+    reviewed_by             INT NULL,
+    reviewed_at             DATETIME NULL,
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    -- Cross-finder uniqueness: only ONE active submission allowed per lost item
+    active_recovery_key     INT GENERATED ALWAYS AS (
+        IF(status IN ('PENDING', 'UNDER_REVIEW', 'APPROVED'), lost_item_id, NULL)
+    ) STORED,
+
+    FOREIGN KEY (lost_item_id) REFERENCES LOST_ITEMS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (finder_id)    REFERENCES USERS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (reviewed_by)  REFERENCES USERS(id) ON DELETE SET NULL,
+
+    INDEX idx_rec_lost_item (lost_item_id),
+    INDEX idx_rec_finder    (finder_id),
+    INDEX idx_rec_status    (status),
+    INDEX idx_rec_created   (created_at),
+    UNIQUE KEY uq_active_recovery_lost_item (active_recovery_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. RECOVERY_IMAGES: Finder-submitted photographs of the found item
+CREATE TABLE IF NOT EXISTS RECOVERY_IMAGES (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    recovery_id   INT NOT NULL,
+    image_url     TEXT NOT NULL,
+    public_id     VARCHAR(255) NOT NULL,
+    file_type     VARCHAR(50) DEFAULT 'image',
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (recovery_id) REFERENCES RECOVERY_SUBMISSIONS(id) ON DELETE CASCADE,
+    INDEX idx_rec_img_recovery (recovery_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3. RECOVERY_AUDIT_LOGS: Immutable, append-only history of status changes and reviews
+CREATE TABLE IF NOT EXISTS RECOVERY_AUDIT_LOGS (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    recovery_id   INT NOT NULL,
+    performed_by  INT NOT NULL,
+    from_status   VARCHAR(50) NULL,
+    to_status     VARCHAR(50) NOT NULL,
+    action        VARCHAR(100) NOT NULL,
+    notes         TEXT NULL,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (recovery_id)  REFERENCES RECOVERY_SUBMISSIONS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (performed_by) REFERENCES USERS(id) ON DELETE RESTRICT,
+    INDEX idx_rec_audit_recovery (recovery_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. RECOVERY_CONVERSATIONS: Dedicated conversation table for recovery workflow
+CREATE TABLE IF NOT EXISTS RECOVERY_CONVERSATIONS (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    recovery_id     INT NOT NULL UNIQUE,
+    reporter_id     INT NOT NULL COMMENT 'Owner of the lost item',
+    finder_id       INT NOT NULL COMMENT 'Person who found the item',
+    last_message_at TIMESTAMP NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (recovery_id) REFERENCES RECOVERY_SUBMISSIONS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (reporter_id) REFERENCES USERS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (finder_id)   REFERENCES USERS(id) ON DELETE RESTRICT,
+    INDEX idx_rec_conv_recovery (recovery_id),
+    INDEX idx_rec_conv_reporter (reporter_id),
+    INDEX idx_rec_conv_finder   (finder_id),
+    INDEX idx_rec_conv_last_msg (last_message_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5. RECOVERY_MESSAGES: Messages exchanged between finder and lost-item reporter
+CREATE TABLE IF NOT EXISTS RECOVERY_MESSAGES (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    conversation_id INT NOT NULL,
+    sender_id       INT NOT NULL,
+    message_text    TEXT NOT NULL,
+    is_read         BOOLEAN DEFAULT FALSE,
+    read_at         DATETIME NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES RECOVERY_CONVERSATIONS(id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id)       REFERENCES USERS(id) ON DELETE RESTRICT,
+    INDEX idx_rec_msg_conv    (conversation_id),
+    INDEX idx_rec_msg_sender  (sender_id),
+    INDEX idx_rec_msg_read    (is_read),
+    INDEX idx_rec_msg_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 6. RECOVERY_MESSAGE_REPORTS: Abuse and moderation reporting for recovery messages
+CREATE TABLE IF NOT EXISTS RECOVERY_MESSAGE_REPORTS (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    message_id       INT NOT NULL,
+    conversation_id  INT NOT NULL,
+    reporter_id      INT NOT NULL,
+    reported_user_id INT NOT NULL,
+    reason           VARCHAR(50) NOT NULL COMMENT 'HARASSMENT | SPAM | SCAM_FRAUD | INAPPROPRIATE | OTHER',
+    details          TEXT NULL,
+    status           VARCHAR(30) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING | REVIEWED | DISMISSED | ACTION_TAKEN',
+    reviewed_by      INT NULL,
+    reviewed_at      DATETIME NULL,
+    admin_notes      TEXT NULL,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_rec_msg_rep_msg    (message_id),
+    INDEX idx_rec_msg_rep_conv   (conversation_id),
+    INDEX idx_rec_msg_rep_status (status),
+    UNIQUE KEY uq_recovery_message_reporter (message_id, reporter_id),
+    FOREIGN KEY (message_id)       REFERENCES RECOVERY_MESSAGES(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id)  REFERENCES RECOVERY_CONVERSATIONS(id) ON DELETE CASCADE,
+    FOREIGN KEY (reporter_id)      REFERENCES USERS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (reported_user_id) REFERENCES USERS(id) ON DELETE RESTRICT,
+    FOREIGN KEY (reviewed_by)      REFERENCES USERS(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+===== ensureTables.js =====
+import pool from './db.js';
+
+/**
+ * Ensures all Phase 7 tables exist on application startup.
+ * Automatically runs CREATE TABLE IF NOT EXISTS for:
+ * 1. CLAIM_CONVERSATIONS
+ * 2. CLAIM_MESSAGES
+ * 3. USER_NOTIFICATIONS
+ * Safe and idempotent.
+ */
+export const ensureTables = async () => {
+    try {
+        console.log('ðŸ”„ Checking and verifying Phase 7 database tables...');
+
+        // 0. Ensure USERS has avatar_url column
+        try {
+            const [cols] = await pool.query(
+                `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'USERS' AND COLUMN_NAME = 'avatar_url'`
+            );
+            if (cols.length === 0) {
+                await pool.query(`ALTER TABLE USERS ADD COLUMN avatar_url VARCHAR(500) NULL AFTER phone`);
+                console.log('âœ… Added avatar_url column to USERS table.');
+            }
+        } catch (colErr) {
+            console.error('âš ï¸ Could not verify/add avatar_url column:', colErr.message);
+        }
+
+        // 1. CLAIM_CONVERSATIONS
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS CLAIM_CONVERSATIONS (
+                id              INT AUTO_INCREMENT PRIMARY KEY,
+                claim_id        INT NOT NULL UNIQUE,
+                claimant_id     INT NOT NULL,
+                finder_id       INT NOT NULL,
+                last_message_at TIMESTAMP NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (claim_id) REFERENCES CLAIMS(id) ON DELETE CASCADE,
+                FOREIGN KEY (claimant_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (finder_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                INDEX idx_claim (claim_id),
+                INDEX idx_claimant (claimant_id),
+                INDEX idx_finder (finder_id),
+                INDEX idx_last_message (last_message_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        // 2. CLAIM_MESSAGES
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS CLAIM_MESSAGES (
+                id              INT AUTO_INCREMENT PRIMARY KEY,
+                conversation_id INT NOT NULL,
+                sender_id       INT NOT NULL,
+                message_text    TEXT NOT NULL,
+                is_read         BOOLEAN DEFAULT FALSE,
+                read_at         DATETIME NULL,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES CLAIM_CONVERSATIONS(id) ON DELETE CASCADE,
+                FOREIGN KEY (sender_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                INDEX idx_conversation (conversation_id),
+                INDEX idx_sender (sender_id),
+                INDEX idx_created (created_at),
+                INDEX idx_read (is_read)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        // 3. USER_NOTIFICATIONS
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS USER_NOTIFICATIONS (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                user_id     INT NOT NULL,
+                type        VARCHAR(50) NOT NULL COMMENT 'CLAIM_SUBMITTED | CLAIM_DECISION | FINDER_REVIEW_REQUESTED | MESSAGE_RECEIVED | ADDITIONAL_INFO_REQUESTED | CLAIM_WITHDRAWN',
+                title       VARCHAR(255) NOT NULL,
+                body        TEXT,
+                link        VARCHAR(500) COMMENT 'Frontend route e.g. /claims/5',
+                is_read     BOOLEAN DEFAULT FALSE,
+                read_at     DATETIME NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_user    (user_id),
+                INDEX idx_read    (is_read),
+                INDEX idx_created (created_at),
+                FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        // 4. MESSAGE_REPORTS (Phase 7 Feature F: Abuse & Moderation)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS MESSAGE_REPORTS (
+                id               INT AUTO_INCREMENT PRIMARY KEY,
+                message_id       INT NOT NULL,
+                conversation_id  INT NOT NULL,
+                reporter_id      INT NOT NULL,
+                reported_user_id INT NOT NULL,
+                reason           VARCHAR(50) NOT NULL COMMENT 'HARASSMENT | SPAM | SCAM_FRAUD | INAPPROPRIATE | OTHER',
+                details          TEXT NULL,
+                status           VARCHAR(30) DEFAULT 'PENDING' COMMENT 'PENDING | REVIEWED | DISMISSED | ACTION_TAKEN',
+                reviewed_by      INT NULL,
+                reviewed_at      DATETIME NULL,
+                admin_notes      TEXT NULL,
+                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_msg           (message_id),
+                INDEX idx_conv          (conversation_id),
+                INDEX idx_reporter      (reporter_id),
+                INDEX idx_reported_user (reported_user_id),
+                INDEX idx_status        (status),
+                FOREIGN KEY (message_id) REFERENCES CLAIM_MESSAGES(id) ON DELETE CASCADE,
+                FOREIGN KEY (conversation_id) REFERENCES CLAIM_CONVERSATIONS(id) ON DELETE CASCADE,
+                FOREIGN KEY (reporter_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (reported_user_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (reviewed_by) REFERENCES USERS(id) ON DELETE SET NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        console.log('âœ… Phase 7 tables ready (USER_NOTIFICATIONS, CLAIM_CONVERSATIONS, CLAIM_MESSAGES, MESSAGE_REPORTS).');
+
+        // 5. Verify Phase 7 Recovery Workflow tables exist (does NOT create them; requires migration 08)
+        console.log('ðŸ” Verifying Phase 7 Recovery Workflow schema...');
+        const recoveryTables = [
+            'RECOVERY_SUBMISSIONS',
+            'RECOVERY_IMAGES',
+            'RECOVERY_AUDIT_LOGS',
+            'RECOVERY_CONVERSATIONS',
+            'RECOVERY_MESSAGES',
+            'RECOVERY_MESSAGE_REPORTS'
+        ];
+        const [existingRecTables] = await pool.query(
+            `SELECT TABLE_NAME FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)`,
+            [recoveryTables]
+        );
+        const existingNames = new Set(existingRecTables.map(r => r.TABLE_NAME));
+        const missing = recoveryTables.filter(t => !existingNames.has(t));
+
+        if (missing.length > 0) {
+            console.error(`\nâŒ [ensureTables] Phase 7 Recovery Workflow tables missing: ${missing.join(', ')}`);
+            console.error('ðŸ‘‰ Please run the authoritative migration: node migrations/08_phase7_recovery_workflow.js\n');
+            process.exit(1);
+        }
+        console.log('âœ… Phase 7 Recovery Workflow tables verified and active.');
+
+        // 6. Ensure Smart Handover tables exist (Phase 8)
+        console.log('ðŸ“¦ Checking Smart Handover tables (Phase 8)...');
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS RECOVERY_HANDOVERS (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                recovery_id INT NOT NULL UNIQUE,
+                finder_id INT NOT NULL,
+                owner_id INT NOT NULL,
+                handover_method ENUM('IN_PERSON', 'COURIER') DEFAULT 'IN_PERSON',
+                handover_status ENUM('INITIATED', 'LOCATION_PUBLISHED', 'SCHEDULED', 'AWAITING_CONFIRMATION', 'COMPLETED', 'ISSUE_REPORTED', 'CANCELLED', 'EXPIRED') DEFAULT 'INITIATED',
+                location_type ENUM('MANUAL', 'GPS') NULL,
+                location_title VARCHAR(255) NULL,
+                address TEXT NULL,
+                locality VARCHAR(150) NULL,
+                city VARCHAR(100) NULL,
+                state VARCHAR(100) NULL,
+                postal_code VARCHAR(20) NULL,
+                landmark VARCHAR(255) NULL,
+                additional_directions TEXT NULL,
+                meeting_instructions TEXT NULL,
+                latitude DECIMAL(10,8) NULL,
+                longitude DECIMAL(11,8) NULL,
+                contact_sharing_consent BOOLEAN DEFAULT FALSE,
+                schedule_date DATE NULL,
+                schedule_time TIME NULL,
+                courier_name VARCHAR(100) NULL,
+                tracking_number VARCHAR(100) NULL,
+                courier_notes TEXT NULL,
+                initiated_at DATETIME NULL,
+                published_at DATETIME NULL,
+                scheduled_at DATETIME NULL,
+                completed_at DATETIME NULL,
+                confirmed_by INT NULL,
+                finder_feedback TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (recovery_id) REFERENCES RECOVERY_SUBMISSIONS(id) ON DELETE CASCADE,
+                FOREIGN KEY (finder_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (owner_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (confirmed_by) REFERENCES USERS(id) ON DELETE SET NULL,
+                INDEX idx_recovery (recovery_id),
+                INDEX idx_finder (finder_id),
+                INDEX idx_owner (owner_id),
+                INDEX idx_status (handover_status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS HANDOVER_LOCATION_SESSIONS (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                handover_id INT NOT NULL,
+                latitude DECIMAL(10,8) NOT NULL,
+                longitude DECIMAL(11,8) NOT NULL,
+                accuracy FLOAT NULL,
+                session_status ENUM('ACTIVE', 'STOPPED', 'EXPIRED') DEFAULT 'ACTIVE',
+                started_at DATETIME NOT NULL,
+                expires_at DATETIME NOT NULL,
+                stopped_at DATETIME NULL,
+                last_updated_at DATETIME NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (handover_id) REFERENCES RECOVERY_HANDOVERS(id) ON DELETE CASCADE,
+                INDEX idx_handover_session (handover_id),
+                INDEX idx_session_status (session_status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS HANDOVER_AUDIT_LOGS (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                handover_id INT NOT NULL,
+                performed_by INT NOT NULL,
+                action VARCHAR(100) NOT NULL,
+                description TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (handover_id) REFERENCES RECOVERY_HANDOVERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (performed_by) REFERENCES USERS(id) ON DELETE CASCADE,
+                INDEX idx_handover_audit (handover_id),
+                INDEX idx_performed_by (performed_by)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS HANDOVER_ISSUES (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                handover_id INT NOT NULL,
+                reported_by INT NOT NULL,
+                issue_type ENUM('FINDER_NO_SHOW', 'WRONG_LOCATION', 'ITEM_NOT_RECEIVED', 'ITEM_CONDITION', 'COMMUNICATION', 'OTHER') NOT NULL,
+                description TEXT NOT NULL,
+                evidence_url TEXT NULL,
+                status ENUM('PENDING', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED') DEFAULT 'PENDING',
+                admin_notes TEXT NULL,
+                resolved_by INT NULL,
+                resolved_at DATETIME NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (handover_id) REFERENCES RECOVERY_HANDOVERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (reported_by) REFERENCES USERS(id) ON DELETE CASCADE,
+                FOREIGN KEY (resolved_by) REFERENCES USERS(id) ON DELETE SET NULL,
+                INDEX idx_handover_issue (handover_id),
+                INDEX idx_reported_by (reported_by),
+                INDEX idx_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        `);
+        // 7. Ensure Handover Enhancements & Feedback Table (Migration 10)
+        try {
+            // 7a. Add 'VERIFIED' to the handover_status ENUM if not present
+            try {
+                const [enumRows] = await pool.query(`
+                    SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE()
+                      AND TABLE_NAME = 'RECOVERY_HANDOVERS'
+                      AND COLUMN_NAME = 'handover_status'
+                `);
+                if (enumRows.length > 0) {
+                    const colType = enumRows[0].COLUMN_TYPE; // e.g. enum('INITIATED','LOCATION_PUBLISHED',...)
+                    if (!colType.includes("'VERIFIED'")) {
+                        await pool.query(`
+                            ALTER TABLE RECOVERY_HANDOVERS
+                            MODIFY COLUMN handover_status
+                            ENUM('INITIATED','LOCATION_PUBLISHED','VERIFIED','SCHEDULED','AWAITING_CONFIRMATION','COMPLETED','ISSUE_REPORTED','CANCELLED','EXPIRED')
+                            NOT NULL DEFAULT 'INITIATED'
+                        `);
+                        console.log("âœ… Added 'VERIFIED' to RECOVERY_HANDOVERS.handover_status ENUM.");
+                    }
+                }
+            } catch (enumErr) {
+                console.error('âš ï¸ Could not verify/add VERIFIED ENUM value:', enumErr.message);
+            }
+
+            const [hCols] = await pool.query(`
+                SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'RECOVERY_HANDOVERS'
+            `);
+            const hColNames = hCols.map(c => c.COLUMN_NAME);
+            if (!hColNames.includes('owner_verified_at')) {
+                await pool.query(`ALTER TABLE RECOVERY_HANDOVERS ADD COLUMN owner_verified_at DATETIME NULL AFTER scheduled_at`);
+            }
+            if (!hColNames.includes('owner_verification_notes')) {
+                await pool.query(`ALTER TABLE RECOVERY_HANDOVERS ADD COLUMN owner_verification_notes TEXT NULL AFTER owner_verified_at`);
+            }
+            if (!hColNames.includes('owner_confirmation_note')) {
+                await pool.query(`ALTER TABLE RECOVERY_HANDOVERS ADD COLUMN owner_confirmation_note TEXT NULL AFTER confirmed_by`);
+            }
+            if (!hColNames.includes('owner_evidence_url')) {
+                await pool.query(`ALTER TABLE RECOVERY_HANDOVERS ADD COLUMN owner_evidence_url VARCHAR(500) NULL AFTER owner_confirmation_note`);
+            }
+
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS HANDOVER_FEEDBACK (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    handover_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    target_user_id INT NOT NULL,
+                    rating INT NOT NULL,
+                    feedback_text TEXT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    FOREIGN KEY (handover_id) REFERENCES RECOVERY_HANDOVERS(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_user_id) REFERENCES USERS(id) ON DELETE CASCADE,
+                    UNIQUE KEY uq_handover_user (handover_id, user_id),
+                    INDEX idx_handover_feedback (handover_id),
+                    INDEX idx_target_user (target_user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            `);
+        } catch (enhErr) {
+            console.error('âš ï¸ Could not verify/add handover enhancement columns/tables:', enhErr.message);
+        }
+
+        console.log('âœ… Smart Handover tables verified and active.');
+    } catch (error) {
+        console.error('âš ï¸ [ensureTables] Error during table bootstrap / verification:', error.message);
+    }
+};

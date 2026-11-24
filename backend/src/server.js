@@ -23,7 +23,8 @@ import adminHandoverRoutes from './routes/adminHandoverRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import { getPublicStats } from './controllers/dashboardController.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { ensureTables } from './config/ensureTables.js';
+import { initializeDatabase } from './config/initDb.js';
+
 
 
 dotenv.config();
@@ -92,10 +93,32 @@ app.use((err, req, res, next) => {
 // ─── Error Handler (must be last) ────────────────────────────────────
 app.use(errorHandler);
 
-app.listen(PORT, async () => {
-    console.log(`✅ Server running at http://localhost:${PORT}`);
-    console.log(`   Auth  → /api/auth`);
-    console.log(`   Dashboard → /api/dashboard`);
-    console.log(`   Health → /api/health`);
-    await ensureTables();
-});
+// ─── Startup Sequence ────────────────────────────────────────────────
+const startServer = async () => {
+    try {
+        console.log('⏳ Connecting to database...');
+        await pool.query('SELECT 1');
+        console.log('✅ Database connected successfully.');
+
+        console.log('⏳ Checking and initializing base database schema and tables...');
+        await initializeDatabase();
+        console.log('✅ Database schema and tables verified successfully.');
+
+        app.listen(PORT, () => {
+            console.log(`✅ Server running at http://localhost:${PORT}`);
+            console.log(`   Auth  → /api/auth`);
+            console.log(`   Dashboard → /api/dashboard`);
+            console.log(`   Health → /api/health`);
+        });
+    } catch (error) {
+        console.error('❌ Failed to start server due to database or table initialization error:');
+        console.error(`   Message: ${error.message || '(no message)'}`);
+        if (error.code)    console.error(`   Code   : ${error.code}`);
+        if (error.errno)   console.error(`   Errno  : ${error.errno}`);
+        if (error.address) console.error(`   Address: ${error.address}`);
+        if (error.port)    console.error(`   Port   : ${error.port}`);
+        process.exit(1);
+    }
+};
+
+startServer();

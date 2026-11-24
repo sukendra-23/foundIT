@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "setup-db": "node src/config/initDb.js"
+    "setup-db": "node src/config/initDb.js",
+    "setup-production-db": "node src/config/initProductionDb.js"
   },
   "dependencies": {
     "axios": "^1.7.7",
