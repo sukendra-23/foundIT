@@ -1,7 +1,6 @@
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
-import { signToken } from '../utils/jwtUtils.js';
+import { signToken, signResetToken, verifyResetToken } from '../utils/jwtUtils.js';
 import { createOtp, verifyOtp, canResendOtp } from '../services/otpService.js';
 import { sendOtpEmail, sendPasswordResetEmail } from '../services/emailService.js';
 import { sendOtpSms } from '../services/smsService.js';
@@ -383,11 +382,10 @@ export const verifyResetOtp = async (req, res) => {
         }
 
         // Issue short-lived reset token (10m, purpose-scoped, not a login JWT)
-        const resetToken = jwt.sign(
-            { id: user.id, purpose: 'password_reset', tokenRowId: tokenRow.id },
-            process.env.JWT_SECRET,
-            { expiresIn: '10m' }
-        );
+        const resetToken = signResetToken({
+            id: user.id,
+            tokenRowId: tokenRow.id,
+        });
 
         // Store token in the row (so resetPassword can verify it was issued by us)
         await pool.query(
@@ -401,6 +399,11 @@ export const verifyResetOtp = async (req, res) => {
         });
     } catch (err) {
         console.error('[VERIFY RESET OTP]', err);
+        if (err.message && err.message.includes('JWT_SECRET')) {
+            return res.status(500).json({
+                message: 'Server authentication configuration error. Please contact administrator.',
+            });
+        }
         return res.status(500).json({ message: 'An error occurred. Please try again.' });
     }
 };
@@ -424,12 +427,12 @@ export const resetPassword = async (req, res) => {
         // Verify the JWT (throws if expired/invalid)
         let decoded;
         try {
-            decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
-        } catch {
-            return res.status(400).json({ message: 'Reset session has expired. Please start over.' });
-        }
-        if (decoded.purpose !== 'password_reset') {
-            return res.status(400).json({ message: 'Invalid reset token.' });
+            decoded = verifyResetToken(resetToken);
+        } catch (jwtErr) {
+            if (jwtErr.name === 'TokenExpiredError') {
+                return res.status(400).json({ message: 'Reset session has expired. Please start over.' });
+            }
+            return res.status(400).json({ message: 'Invalid or expired reset token. Please request a new code.' });
         }
 
         // Find the matching unconsumed token row by id and user id

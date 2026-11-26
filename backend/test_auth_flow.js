@@ -3,6 +3,14 @@ import bcrypt from 'bcryptjs';
 import { generateOtp } from './src/utils/otpUtils.js';
 import { sendOtpEmail, validateEmailConfig } from './src/services/emailService.js';
 import { sendOtpSms } from './src/services/smsService.js';
+import {
+    signToken,
+    verifyToken,
+    signResetToken,
+    verifyResetToken,
+    getJwtSecret,
+    validateJwtConfig,
+} from './src/utils/jwtUtils.js';
 
 console.log('🧪 Starting FoundIT Authentication & Email Lifecycle Test Suite...\n');
 
@@ -129,6 +137,97 @@ await test('SMS service does not log plain OTP in production mode', async () => 
 await test('validateEmailConfig runs without throwing in any environment', () => {
     validateEmailConfig();
     assert.ok(true);
+});
+
+// ─── TEST 8: JWT Secret Retrieval in Development Mode ────────────────
+await test('JWT secret retrieval uses safe fallback in non-production', () => {
+    const prevEnv = process.env.NODE_ENV;
+    const prevSecret = process.env.JWT_SECRET;
+    try {
+        process.env.NODE_ENV = 'development';
+        delete process.env.JWT_SECRET;
+
+        const secret = getJwtSecret();
+        assert.ok(typeof secret === 'string' && secret.length >= 16);
+    } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevSecret) process.env.JWT_SECRET = prevSecret;
+    }
+});
+
+// ─── TEST 9: JWT Secret Missing in Production Mode Throws Clear Error ─
+await test('JWT secret retrieval in production mode throws descriptive configuration error', () => {
+    const prevEnv = process.env.NODE_ENV;
+    const prevSecret = process.env.JWT_SECRET;
+    try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.JWT_SECRET;
+
+        let threw = false;
+        try {
+            getJwtSecret();
+        } catch (err) {
+            threw = true;
+            assert.ok(err.message.includes('JWT_SECRET'));
+            assert.ok(err.message.includes('Railway'));
+        }
+        assert.strictEqual(threw, true, 'Must throw descriptive error in production when secret is missing');
+    } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevSecret) process.env.JWT_SECRET = prevSecret;
+    }
+});
+
+// ─── TEST 10: JWT Startup Validator Behavior ─────────────────────────
+await test('validateJwtConfig reports critical error in production when unconfigured', () => {
+    const prevEnv = process.env.NODE_ENV;
+    const prevSecret = process.env.JWT_SECRET;
+    try {
+        process.env.NODE_ENV = 'production';
+        delete process.env.JWT_SECRET;
+
+        const res = validateJwtConfig();
+        assert.strictEqual(res.valid, false);
+        assert.ok(res.error.includes('JWT_SECRET missing'));
+    } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevSecret) process.env.JWT_SECRET = prevSecret;
+    }
+});
+
+// ─── TEST 11: Login Auth Token Signing and Verification ──────────────
+await test('signToken and verifyToken produce and decode valid 7-day tokens', () => {
+    const payload = { id: 42, role: 'USER' };
+    const token = signToken(payload);
+    assert.strictEqual(typeof token, 'string');
+
+    const decoded = verifyToken(token);
+    assert.strictEqual(decoded.id, 42);
+    assert.strictEqual(decoded.role, 'USER');
+    assert.ok(decoded.exp > decoded.iat);
+});
+
+// ─── TEST 12: Password Reset Token Scoping and Purpose Validation ────
+await test('signResetToken scopes purpose to password_reset and verifyResetToken validates it', () => {
+    const payload = { id: 99, tokenRowId: 1234 };
+    const resetToken = signResetToken(payload);
+    assert.strictEqual(typeof resetToken, 'string');
+
+    const decoded = verifyResetToken(resetToken);
+    assert.strictEqual(decoded.id, 99);
+    assert.strictEqual(decoded.tokenRowId, 1234);
+    assert.strictEqual(decoded.purpose, 'password_reset');
+
+    // Attempting to verify a login token with verifyResetToken must fail
+    const loginToken = signToken({ id: 99, role: 'USER' });
+    let threw = false;
+    try {
+        verifyResetToken(loginToken);
+    } catch (err) {
+        threw = true;
+        assert.ok(err.message.includes('purpose'));
+    }
+    assert.strictEqual(threw, true, 'verifyResetToken must reject tokens lacking password_reset purpose');
 });
 
 console.log(`\n========================================`);

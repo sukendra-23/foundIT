@@ -25,6 +25,7 @@ import { getPublicStats } from './controllers/dashboardController.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { initializeDatabase } from './config/initDb.js';
 import { validateEmailConfig } from './services/emailService.js';
+import { validateJwtConfig } from './utils/jwtUtils.js';
 
 
 
@@ -143,7 +144,8 @@ const startServer = async () => {
         await initializeDatabase();
         console.log('✅ Database schema and tables verified successfully.');
 
-        console.log('⏳ Validating email service configuration...');
+        console.log('⏳ Validating JWT and email configurations...');
+        validateJwtConfig();
         validateEmailConfig();
 
         app.listen(PORT, () => {
