@@ -1,5 +1,6 @@
 import pool from '../config/db.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinaryHelper.js';
+import { isCloudinaryConfigured } from '../config/cloudinary.js';
 import { runMatchingForLostItem } from '../utils/matchEngine.js';
 
 // Helper to safely get images JSON array
@@ -98,6 +99,13 @@ export const createLostItem = async (req, res, next) => {
 
         // 2. Upload Images to Cloudinary and insert into DB
         if (files.length > 0) {
+            if (!isCloudinaryConfigured()) {
+                await connection.rollback();
+                return res.status(503).json({
+                    message: 'Image storage is unconfigured. Please configure CLOUDINARY_URL in Railway variables.',
+                });
+            }
+
             const folder = `lost-and-found/lost-items/${itemId}`;
             const uploadPromises = files.map(file => uploadToCloudinary(file.buffer, folder));
 
@@ -105,6 +113,7 @@ export const createLostItem = async (req, res, next) => {
             try {
                 uploadedAssets = await Promise.all(uploadPromises);
             } catch (cloudinaryError) {
+                console.error('[LOST ITEM IMAGE UPLOAD]', cloudinaryError);
                 // If Cloudinary upload fails, rollback database transaction
                 await connection.rollback();
                 return res.status(500).json({ message: 'Image upload failed. Please try again.' });
@@ -183,6 +192,13 @@ export const updateLostItem = async (req, res, next) => {
 
         // Upload new images
         if (files.length > 0) {
+            if (!isCloudinaryConfigured()) {
+                await connection.rollback();
+                return res.status(503).json({
+                    message: 'Image storage is unconfigured. Please configure CLOUDINARY_URL in Railway variables.',
+                });
+            }
+
             // Enforce max 5 images total
             const [currentImages] = await connection.query('SELECT COUNT(*) as count FROM ITEM_IMAGES WHERE lost_item_id = ?', [id]);
             if (currentImages[0].count + files.length > 5) {

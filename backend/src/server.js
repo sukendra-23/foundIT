@@ -26,6 +26,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { initializeDatabase } from './config/initDb.js';
 import { validateEmailConfig } from './services/emailService.js';
 import { validateJwtConfig } from './utils/jwtUtils.js';
+import { validateCloudinaryConfig } from './config/cloudinary.js';
 
 
 
@@ -144,9 +145,10 @@ const startServer = async () => {
         await initializeDatabase();
         console.log('✅ Database schema and tables verified successfully.');
 
-        console.log('⏳ Validating JWT and email configurations...');
+        console.log('⏳ Validating JWT, email, and storage configurations...');
         validateJwtConfig();
         validateEmailConfig();
+        validateCloudinaryConfig();
 
         app.listen(PORT, () => {
             console.log(`✅ Server running at http://localhost:${PORT}`);

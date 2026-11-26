@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import pool from '../config/db.js';
-import { uploadToCloudinary } from '../utils/cloudinaryHelper.js';
+import { uploadAvatarToCloudinary, deleteFromCloudinary, extractPublicId } from '../utils/cloudinaryHelper.js';
+import { isCloudinaryConfigured } from '../config/cloudinary.js';
 import { createOtp, verifyOtp } from '../services/otpService.js';
 import { sendOtpEmail } from '../services/emailService.js';
 
@@ -75,27 +76,33 @@ export const updateAvatar = async (req, res, next) => {
             return res.status(400).json({ message: 'Please select an image file to upload.' });
         }
 
-        let avatarUrl = '';
-        try {
-            // Attempt upload to Cloudinary
-            const result = await uploadToCloudinary(req.file.buffer, 'avatars');
-            avatarUrl = result.secure_url || result.url;
-        } catch (uploadErr) {
-            console.warn('[AVATAR UPLOAD] Cloudinary upload skipped or failed, storing optimized data URL:', uploadErr.message);
-            // Fallback to base64 data URL so user upload ALWAYS succeeds even in offline/test env
-            const base64 = req.file.buffer.toString('base64');
-            avatarUrl = `data:${req.file.mimetype};base64,${base64}`;
+        if (!isCloudinaryConfigured()) {
+            return res.status(503).json({
+                message: 'Image storage is not configured. Please set CLOUDINARY_URL or Cloudinary credentials in Railway variables.',
+            });
         }
 
-        // Ensure avatar_url column exists
-        try {
-            await pool.query('ALTER TABLE USERS ADD COLUMN avatar_url VARCHAR(500) NULL');
-        } catch (_) {}
+        // Fetch current avatar to clean up previous Cloudinary asset if one exists
+        const [existing] = await pool.query('SELECT avatar_url FROM USERS WHERE id = ?', [req.user.id]);
+        const oldAvatarUrl = existing[0]?.avatar_url;
 
+        // Upload new avatar to Cloudinary with smart face-crop transformation
+        const result = await uploadAvatarToCloudinary(req.file.buffer);
+        const avatarUrl = result.secure_url || result.url;
+
+        // Store permanent CDN URL in database
         await pool.query(
             'UPDATE USERS SET avatar_url = ?, updated_at = NOW() WHERE id = ?',
             [avatarUrl, req.user.id]
         );
+
+        // Clean up previous Cloudinary avatar in background (fire-and-forget)
+        if (oldAvatarUrl) {
+            const oldPublicId = extractPublicId(oldAvatarUrl);
+            if (oldPublicId) {
+                deleteFromCloudinary(oldPublicId).catch(() => {});
+            }
+        }
 
         const [rows] = await pool.query('SELECT * FROM USERS WHERE id = ?', [req.user.id]);
         delete rows[0].password_hash;
@@ -106,7 +113,8 @@ export const updateAvatar = async (req, res, next) => {
             user: rows[0],
         });
     } catch (error) {
-        next(error);
+        console.error('[AVATAR UPLOAD ERROR]', error);
+        return res.status(500).json({ message: 'Failed to upload profile picture. Please try again.' });
     }
 };
 
@@ -116,10 +124,21 @@ export const updateAvatar = async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────
 export const deleteAvatar = async (req, res, next) => {
     try {
+        // Fetch current avatar to delete from Cloudinary
+        const [existing] = await pool.query('SELECT avatar_url FROM USERS WHERE id = ?', [req.user.id]);
+        const currentAvatarUrl = existing[0]?.avatar_url;
+
         await pool.query(
             'UPDATE USERS SET avatar_url = NULL, updated_at = NOW() WHERE id = ?',
             [req.user.id]
         );
+
+        if (currentAvatarUrl) {
+            const publicId = extractPublicId(currentAvatarUrl);
+            if (publicId) {
+                deleteFromCloudinary(publicId).catch(() => {});
+            }
+        }
 
         const [rows] = await pool.query('SELECT * FROM USERS WHERE id = ?', [req.user.id]);
         delete rows[0].password_hash;

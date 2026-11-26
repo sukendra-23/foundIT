@@ -252,6 +252,7 @@ export const login = async (req, res, next) => {
                 email: user.email,
                 phone: user.phone,
                 role: user.role,
+                avatar_url: user.avatar_url || null,
             },
         });
     } catch (error) {

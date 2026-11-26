@@ -24,15 +24,18 @@ export const ensureTables = async () => {
             throw new Error(`Prerequisite base table(s) missing: ${missingBase.join(', ')}. Please run schema initialization (npm run setup-db) before starting the server.`);
         }
 
-        // 0. Ensure USERS has avatar_url column
+        // 0. Ensure USERS has avatar_url column (TEXT to avoid truncation)
         try {
             const [cols] = await pool.query(
-                `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                `SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS
                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'USERS' AND COLUMN_NAME = 'avatar_url'`
             );
             if (cols.length === 0) {
-                await pool.query(`ALTER TABLE USERS ADD COLUMN avatar_url VARCHAR(500) NULL AFTER phone`);
+                await pool.query(`ALTER TABLE USERS ADD COLUMN avatar_url TEXT NULL AFTER phone`);
                 console.log('✅ Added avatar_url column to USERS table.');
+            } else if (cols[0].DATA_TYPE?.toLowerCase() === 'varchar') {
+                await pool.query(`ALTER TABLE USERS MODIFY COLUMN avatar_url TEXT NULL`);
+                console.log('✅ Upgraded avatar_url column to TEXT in USERS table.');
             }
         } catch (colErr) {
             console.error('⚠️ Could not verify/add avatar_url column:', colErr.message);

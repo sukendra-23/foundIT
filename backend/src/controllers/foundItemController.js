@@ -1,5 +1,6 @@
 import pool from '../config/db.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinaryHelper.js';
+import { isCloudinaryConfigured } from '../config/cloudinary.js';
 import { runMatchingForFoundItem } from '../utils/matchEngine.js';
 
 const imagesSelectQuery = `
@@ -93,6 +94,13 @@ export const createFoundItem = async (req, res, next) => {
         const itemId = result.insertId;
 
         if (files.length > 0) {
+            if (!isCloudinaryConfigured()) {
+                await connection.rollback();
+                return res.status(503).json({
+                    message: 'Image storage is unconfigured. Please configure CLOUDINARY_URL in Railway variables.',
+                });
+            }
+
             const folder = `lost-and-found/found-items/${itemId}`;
             const uploadPromises = files.map(file => uploadToCloudinary(file.buffer, folder));
 
@@ -100,6 +108,7 @@ export const createFoundItem = async (req, res, next) => {
             try {
                 uploadedAssets = await Promise.all(uploadPromises);
             } catch (cloudinaryError) {
+                console.error('[FOUND ITEM IMAGE UPLOAD]', cloudinaryError);
                 await connection.rollback();
                 return res.status(500).json({ message: 'Image upload failed. Please try again.' });
             }
@@ -169,6 +178,13 @@ export const updateFoundItem = async (req, res, next) => {
         }
 
         if (files.length > 0) {
+            if (!isCloudinaryConfigured()) {
+                await connection.rollback();
+                return res.status(503).json({
+                    message: 'Image storage is unconfigured. Please configure CLOUDINARY_URL in Railway variables.',
+                });
+            }
+
             const [currentImages] = await connection.query('SELECT COUNT(*) as count FROM ITEM_IMAGES WHERE found_item_id = ?', [id]);
             if (currentImages[0].count + files.length > 5) {
                 await connection.rollback();
