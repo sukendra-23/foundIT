@@ -29,73 +29,84 @@ export const register = async (req, res, next) => {
             return res.status(400).json({ message: 'Please enter a valid email address.' });
         }
 
+        const cleanEmail = email.toLowerCase().trim();
+        const cleanPhone = phone.trim();
+        const cleanName = name.trim();
+
         // Check for existing active user with same email or phone
         const [existing] = await pool.query(
-            `SELECT id, email, phone, status FROM USERS WHERE email = ? OR phone = ?`,
-            [email.toLowerCase(), phone]
+            `SELECT id, name, email, phone, status FROM USERS WHERE email = ? OR phone = ?`,
+            [cleanEmail, cleanPhone]
         );
 
         if (existing.length > 0) {
             const found = existing[0];
 
-            // If unverified/inactive — re-send OTP to let them complete registration
+            // If unverified/inactive — update password/credentials and re-send OTP
             if (found.status === 'INACTIVE') {
-                const otp = await createOtp(found.id);
-                // Fire email+SMS concurrently — don't fail registration if SMS fails
-                const [emailResult] = await Promise.allSettled([
-                    sendOtpEmail(email, name, otp),
-                    sendOtpSms(phone, otp),
-                ]);
+                const passwordHash = await bcrypt.hash(String(password), 10);
+                await pool.query(
+                    `UPDATE USERS SET name = ?, email = ?, phone = ?, password_hash = ?, updated_at = NOW() WHERE id = ?`,
+                    [cleanName, cleanEmail, cleanPhone, passwordHash, found.id]
+                );
 
-                if (emailResult.status === 'rejected') {
+                const otp = await createOtp(found.id);
+
+                try {
+                    await sendOtpEmail(cleanEmail, cleanName, otp);
+                } catch (emailErr) {
+                    console.error('[REGISTER] Email delivery failed:', emailErr.message);
                     return res.status(502).json({
-                        message: 'Failed to send verification email. Please try again.',
+                        message: 'Failed to deliver verification email. Please check your email address or contact support.',
                         userId: found.id,
-                        email: found.email,
+                        email: cleanEmail,
                     });
                 }
 
+                sendOtpSms(cleanPhone, otp).catch(() => {});
+
                 return res.status(200).json({
-                    message: 'Account pending verification. A new OTP has been sent.',
+                    message: 'Account pending verification. A new OTP has been sent to your email.',
                     userId: found.id,
-                    email: found.email,
+                    email: cleanEmail,
                 });
             }
 
-            if (found.email === email.toLowerCase()) {
+            if (found.email === cleanEmail) {
                 return res.status(409).json({ message: 'This email is already registered.' });
             }
             return res.status(409).json({ message: 'This phone number is already registered.' });
         }
 
         // Hash password and create INACTIVE user
-        const passwordHash = await bcrypt.hash(password, 10);
+        const passwordHash = await bcrypt.hash(String(password), 10);
         const [result] = await pool.query(
             `INSERT INTO USERS (name, email, phone, password_hash, role, status) VALUES (?, ?, ?, ?, 'USER', 'INACTIVE')`,
-            [name.trim(), email.toLowerCase().trim(), phone.trim(), passwordHash]
+            [cleanName, cleanEmail, cleanPhone, passwordHash]
         );
 
         const userId = result.insertId;
 
-        // Generate ONE OTP — send to both email and phone
+        // Generate ONE OTP — send to email
         const otp = await createOtp(userId);
-        const [emailResult] = await Promise.allSettled([
-            sendOtpEmail(email, name, otp),
-            sendOtpSms(phone, otp),
-        ]);
 
-        if (emailResult.status === 'rejected') {
+        try {
+            await sendOtpEmail(cleanEmail, cleanName, otp);
+        } catch (emailErr) {
+            console.error('[REGISTER] Email delivery failed:', emailErr.message);
             return res.status(502).json({
-                message: 'Failed to send verification email. Please try again.',
+                message: 'Account created, but failed to deliver verification email. Please check your email address or try resending OTP.',
                 userId,
-                email: email.toLowerCase(),
+                email: cleanEmail,
             });
         }
 
+        sendOtpSms(cleanPhone, otp).catch(() => {});
+
         return res.status(201).json({
-            message: 'Registration successful. OTP sent to your email and phone.',
+            message: 'Registration successful. OTP sent to your email.',
             userId,
-            email: email.toLowerCase(),
+            email: cleanEmail,
         });
     } catch (error) {
         next(error);
@@ -121,7 +132,7 @@ export const verifyOtpHandler = async (req, res, next) => {
 
         // Activate account
         await pool.query(
-            `UPDATE USERS SET status = 'ACTIVE', email_verified = TRUE, phone_verified = TRUE WHERE id = ?`,
+            `UPDATE USERS SET status = 'ACTIVE', email_verified = TRUE, phone_verified = TRUE, updated_at = NOW() WHERE id = ?`,
             [userId]
         );
 
@@ -165,25 +176,26 @@ export const resendOtpHandler = async (req, res, next) => {
         }
 
         const otp = await createOtp(userId);
-        const [emailResult] = await Promise.allSettled([
-            sendOtpEmail(user.email, user.name, otp),
-            sendOtpSms(user.phone, otp),
-        ]);
 
-        if (emailResult.status === 'rejected') {
+        try {
+            await sendOtpEmail(user.email, user.name, otp);
+        } catch (emailErr) {
+            console.error('[RESEND OTP] Email delivery failed:', emailErr.message);
             return res.status(502).json({
-                message: 'Failed to send verification email. Please try again.',
+                message: 'Failed to deliver verification email. Please try again.',
             });
         }
 
-        return res.status(200).json({ message: 'New OTP sent to your email and phone.' });
+        sendOtpSms(user.phone, otp).catch(() => {});
+
+        return res.status(200).json({ message: 'New OTP sent to your email.' });
     } catch (error) {
         next(error);
     }
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// LOGIN
+// LOGIN (supports email OR phone number)
 // ─────────────────────────────────────────────────────────────────────
 export const login = async (req, res, next) => {
     try {
@@ -193,9 +205,15 @@ export const login = async (req, res, next) => {
             return res.status(400).json({ message: 'Email and password are required.' });
         }
 
+        const identifier = String(email).trim();
+        const isEmail = identifier.includes('@');
+
+        // Look up by email or phone
         const [users] = await pool.query(
-            'SELECT * FROM USERS WHERE email = ?',
-            [email.toLowerCase().trim()]
+            isEmail
+                ? 'SELECT * FROM USERS WHERE email = ?'
+                : 'SELECT * FROM USERS WHERE phone = ? OR email = ?',
+            isEmail ? [identifier.toLowerCase()] : [identifier, identifier.toLowerCase()]
         );
 
         if (users.length === 0) {
@@ -204,13 +222,13 @@ export const login = async (req, res, next) => {
 
         const user = users[0];
 
-        // 1. Check password FIRST before checking account status
-        const passwordMatch = await bcrypt.compare(password, user.password_hash);
+        // 1. Verify password against stored bcrypt hash
+        const passwordMatch = await bcrypt.compare(String(password), user.password_hash);
         if (!passwordMatch) {
             return res.status(401).json({ message: 'Incorrect password. Please try again.' });
         }
 
-        // 2. Now check if account is inactive or banned
+        // 2. Check if account is verified
         if (user.status === 'INACTIVE') {
             return res.status(403).json({
                 message: 'Account not verified. Please check your email for the OTP.',
@@ -300,7 +318,6 @@ export const forgotPassword = async (req, res) => {
             await sendPasswordResetEmail(email.toLowerCase().trim(), user.name, otp);
         } catch (emailErr) {
             console.error('[FORGOT PASSWORD] Email delivery failed:', emailErr.message);
-            // Don't expose email failure — return generic OK
         }
 
         return res.status(200).json(GENERIC_OK);
@@ -442,9 +459,6 @@ export const resetPassword = async (req, res) => {
             conn.release();
         }
 
-        // NOTE: Existing JWTs (7-day) remain valid until natural expiry.
-        // This is a known limitation of stateless JWTs. Logging out on all devices
-        // would require a token-version column or blocklist, not implemented here.
         return res.status(200).json({ message: 'Password reset successfully. Please log in with your new password.' });
     } catch (err) {
         console.error('[RESET PASSWORD]', err);

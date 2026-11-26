@@ -24,6 +24,7 @@ import userRoutes from './routes/userRoutes.js';
 import { getPublicStats } from './controllers/dashboardController.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { initializeDatabase } from './config/initDb.js';
+import { validateEmailConfig } from './services/emailService.js';
 
 
 
@@ -141,6 +142,9 @@ const startServer = async () => {
         console.log('⏳ Checking and initializing base database schema and tables...');
         await initializeDatabase();
         console.log('✅ Database schema and tables verified successfully.');
+
+        console.log('⏳ Validating email service configuration...');
+        validateEmailConfig();
 
         app.listen(PORT, () => {
             console.log(`✅ Server running at http://localhost:${PORT}`);

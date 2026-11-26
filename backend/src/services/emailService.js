@@ -4,11 +4,8 @@ import axios from 'axios';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const isDevMode = !process.env.BREVO_API_KEY ||
-    process.env.BREVO_API_KEY.startsWith('your_');
-
 /**
- * Custom DNS lookup for Brevo HTTPS agent:
+ * Custom DNS lookup for HTTPS agent:
  * - Enforces IPv4 resolution (family: 4)
  * - Falls back to direct DNS query (dns.resolve4 via c-ares) if OS getaddrinfo fails transiently
  */
@@ -28,7 +25,6 @@ const lookupIPv4 = (hostname, options, callback) => {
         if (!err) {
             return cb(null, address, family);
         }
-        // Fallback to dns.resolve4 for transient getaddrinfo / ENOTFOUND failures
         dns.resolve4(hostname, (resErr, addresses) => {
             if (!resErr && addresses && addresses.length > 0) {
                 if (isAll) {
@@ -41,7 +37,7 @@ const lookupIPv4 = (hostname, options, callback) => {
     });
 };
 
-const brevoAgent = new https.Agent({
+const httpsAgent = new https.Agent({
     keepAlive: true,
     keepAliveMsecs: 10000,
     lookup: lookupIPv4,
@@ -50,7 +46,6 @@ const brevoAgent = new https.Agent({
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const isTransientNetworkError = (error) => {
-    // Never retry permanent HTTP response errors from Brevo (e.g. 400, 401, 403, 404, 422)
     if (error.response) {
         return false;
     }
@@ -78,775 +73,435 @@ const isTransientNetworkError = (error) => {
 };
 
 /**
- * Sends an OTP email via Brevo API with bounded retries for transient DNS/network errors.
+ * Validates email service configuration during backend startup.
+ * Called from server.js.
+ */
+export const validateEmailConfig = () => {
+    const isProd = process.env.NODE_ENV === 'production';
+    const hasBrevo = Boolean(process.env.BREVO_API_KEY && !process.env.BREVO_API_KEY.startsWith('your_'));
+    const hasResend = Boolean(process.env.RESEND_API_KEY && !process.env.RESEND_API_KEY.startsWith('your_'));
+    const hasSender = Boolean(process.env.EMAIL_FROM && !process.env.EMAIL_FROM.startsWith('your_'));
+
+    if (isProd) {
+        if (!hasBrevo && !hasResend) {
+            console.error('\n❌ [EMAIL CONFIG ERROR] Production mode is active but neither BREVO_API_KEY nor RESEND_API_KEY is configured.');
+            console.error('   -> Users will NOT receive OTP emails until you set BREVO_API_KEY and EMAIL_FROM in Railway dashboard.\n');
+        } else if (!hasSender) {
+            console.error('\n❌ [EMAIL CONFIG ERROR] Production mode is active but EMAIL_FROM is missing.');
+            console.error('   -> Please set EMAIL_FROM (verified sender address in Brevo/Resend) in Railway dashboard.\n');
+        } else {
+            const provider = hasBrevo ? 'Brevo API' : 'Resend API';
+            console.log(`✅ [EMAIL CONFIG] Production email service active (${provider}, Sender: ${process.env.EMAIL_FROM}).`);
+        }
+    } else {
+        if (hasBrevo || hasResend) {
+            console.log('ℹ️ [EMAIL CONFIG] Development mode: Real email delivery active.');
+        } else {
+            console.log('ℹ️ [EMAIL CONFIG] Development mode: Using console email logging (no real provider key configured).');
+        }
+    }
+};
+
+/**
+ * Core email delivery dispatcher.
+ * Supports Brevo API (primary) and Resend API (alternative).
+ * Distinguishes development console logging from real production delivery.
+ */
+const executeSendEmail = async ({ toEmail, toName, subject, htmlContent, logTag = 'EMAIL' }) => {
+    const isProd = process.env.NODE_ENV === 'production';
+    const brevoKey = process.env.BREVO_API_KEY && !process.env.BREVO_API_KEY.startsWith('your_') ? process.env.BREVO_API_KEY : null;
+    const resendKey = process.env.RESEND_API_KEY && !process.env.RESEND_API_KEY.startsWith('your_') ? process.env.RESEND_API_KEY : null;
+    const senderEmail = process.env.EMAIL_FROM;
+    const senderName = process.env.EMAIL_FROM_NAME || 'FoundIT';
+
+    // Development mode fallback when no real email credentials are provided
+    if (!brevoKey && !resendKey) {
+        if (isProd) {
+            const msg = 'Production email delivery failed: Neither BREVO_API_KEY nor RESEND_API_KEY is configured in Railway environment variables.';
+            console.error(`❌ [${logTag} ERROR] ${msg}`);
+            throw new Error(msg);
+        }
+
+        console.log(`\n📧 [DEV EMAIL - ${logTag}] ───────────────────────────`);
+        console.log(`   To      : ${toName} <${toEmail}>`);
+        console.log(`   Subject : ${subject}`);
+        console.log('──────────────────────────────────────────────────────\n');
+        return { mode: 'development', to: toEmail };
+    }
+
+    if (!senderEmail) {
+        const msg = 'Email delivery failed: EMAIL_FROM is not configured. Please specify a verified sender address.';
+        console.error(`❌ [${logTag} ERROR] ${msg}`);
+        throw new Error(msg);
+    }
+
+    const MAX_ATTEMPTS = 3;
+    let lastError = null;
+
+    // --- Provider 1: Brevo API ---
+    if (brevoKey) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const response = await axios.post(
+                    'https://api.brevo.com/v3/smtp/email',
+                    {
+                        sender: {
+                            name: senderName,
+                            email: senderEmail,
+                        },
+                        to: [{ email: toEmail, name: toName || toEmail }],
+                        subject,
+                        htmlContent,
+                    },
+                    {
+                        headers: {
+                            'api-key': brevoKey,
+                            'Content-Type': 'application/json',
+                        },
+                        httpsAgent,
+                        timeout: 10000,
+                    }
+                );
+
+                const messageId = response.data?.messageId;
+                console.log(`✅ [EMAIL ACCEPTED - ${logTag}] Provider: Brevo | MessageID: ${messageId || 'accepted'} | Recipient: ${toEmail}`);
+                return { mode: 'production', provider: 'brevo', messageId, to: toEmail };
+            } catch (error) {
+                lastError = error;
+                const isTransient = isTransientNetworkError(error);
+
+                if (attempt < MAX_ATTEMPTS && isTransient) {
+                    const delayMs = attempt * 1000;
+                    console.warn(`⚠️ [BREVO RETRY] Attempt ${attempt}/${MAX_ATTEMPTS} for ${toEmail} (${error.code || error.message}). Retrying in ${delayMs}ms...`);
+                    await sleep(delayMs);
+                    continue;
+                }
+                break;
+            }
+        }
+
+        const errorDetail = lastError.response?.data?.message || lastError.message;
+        const statusCode = lastError.response?.status;
+        console.error(`\n❌ [BREVO EMAIL ERROR - ${logTag}]: Status ${statusCode || 'Network'} - ${errorDetail}`);
+        throw new Error(`Email provider error (Brevo): ${errorDetail}`);
+    }
+
+    // --- Provider 2: Resend API ---
+    if (resendKey) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                const response = await axios.post(
+                    'https://api.resend.com/emails',
+                    {
+                        from: `${senderName} <${senderEmail}>`,
+                        to: [toEmail],
+                        subject,
+                        html: htmlContent,
+                    },
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${resendKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        httpsAgent,
+                        timeout: 10000,
+                    }
+                );
+
+                const messageId = response.data?.id;
+                console.log(`✅ [EMAIL ACCEPTED - ${logTag}] Provider: Resend | ID: ${messageId || 'accepted'} | Recipient: ${toEmail}`);
+                return { mode: 'production', provider: 'resend', messageId, to: toEmail };
+            } catch (error) {
+                lastError = error;
+                const isTransient = isTransientNetworkError(error);
+
+                if (attempt < MAX_ATTEMPTS && isTransient) {
+                    const delayMs = attempt * 1000;
+                    console.warn(`⚠️ [RESEND RETRY] Attempt ${attempt}/${MAX_ATTEMPTS} for ${toEmail}. Retrying in ${delayMs}ms...`);
+                    await sleep(delayMs);
+                    continue;
+                }
+                break;
+            }
+        }
+
+        const errorDetail = lastError.response?.data?.message || lastError.message;
+        console.error(`\n❌ [RESEND EMAIL ERROR - ${logTag}]: ${errorDetail}`);
+        throw new Error(`Email provider error (Resend): ${errorDetail}`);
+    }
+};
+
+/**
+ * Sends an OTP email for account verification.
+ * Subject: FoundIT - Account Verification OTP
  */
 export const sendOtpEmail = async (toEmail, toName, otp) => {
-    if (isDevMode) {
+    const isProd = process.env.NODE_ENV === 'production';
+    const brevoKey = process.env.BREVO_API_KEY && !process.env.BREVO_API_KEY.startsWith('your_');
+    const resendKey = process.env.RESEND_API_KEY && !process.env.RESEND_API_KEY.startsWith('your_');
+
+    // In local dev without keys, log OTP clearly for developer convenience
+    if (!isProd && !brevoKey && !resendKey) {
         console.log('\n📧 [DEV EMAIL] ───────────────────────────');
         console.log(`   To   : ${toName} <${toEmail}>`);
+        console.log(`   OTP  : ${otp}`);
         console.log(`   Exp  : 10 minutes`);
         console.log('─────────────────────────────────────────\n');
-        return { mode: 'development' };
+        return { mode: 'development', to: toEmail };
     }
 
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 32px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 Lost & Found</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; background: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;">
+            <div style="text-align: center; margin-bottom: 28px;">
+                <h1 style="color: #4361EE; font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">🔍 FoundIT</h1>
+                <p style="color: #64748B; font-size: 14px; margin: 4px 0 0 0;">Lost and Found Community Platform</p>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">Verify your account</h2>
-            <p style="color: #64748B; margin-bottom: 24px;">Hi ${toName}, enter the OTP below to verify your account:</p>
-            <div style="background: #EEF2FF; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
-                <span style="font-size: 42px; font-weight: 800; letter-spacing: 12px; color: #4361EE;">${otp}</span>
+            
+            <div style="background: #F8FAFC; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+                <h2 style="color: #0F172A; font-size: 18px; font-weight: 700; margin: 0 0 12px 0;">Verify Your Account</h2>
+                <p style="color: #334155; font-size: 15px; line-height: 1.5; margin: 0 0 20px 0;">
+                    Hi <strong>${toName}</strong>, thank you for registering with FoundIT. Use the verification code below to complete your registration:
+                </p>
+                
+                <div style="background: #EEF2FF; border: 2px dashed #4361EE; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 20px;">
+                    <span style="font-family: monospace, Courier; font-size: 40px; font-weight: 800; letter-spacing: 10px; color: #4361EE; display: inline-block;">${otp}</span>
+                </div>
+                
+                <p style="color: #475569; font-size: 14px; margin: 0 0 8px 0;">
+                    ⏱ <strong>Expiration:</strong> This code is valid for <strong>10 minutes</strong>.
+                </p>
+                <p style="color: #DC2626; font-size: 13px; font-weight: 600; margin: 0;">
+                    🔒 <strong>Security Warning:</strong> Never share this code with anyone. FoundIT staff will never ask for your verification code.
+                </p>
             </div>
-            <p style="color: #64748B; font-size: 14px;">⏱ This OTP expires in <strong>10 minutes</strong>.</p>
-            <p style="color: #64748B; font-size: 14px;">🔒 Do not share this OTP with anyone.</p>
+
+            <p style="color: #64748B; font-size: 13px; line-height: 1.5; margin-bottom: 20px;">
+                If you did not attempt to register on FoundIT, please disregard this email.
+            </p>
+
             <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">If you did not register on Lost & Found, please ignore this email.</p>
+            <p style="color: #94A3B8; font-size: 12px; text-align: center; margin: 0;">
+                &copy; ${new Date().getFullYear()} FoundIT Platform. All rights reserved.
+            </p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'Lost & Found',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: `${otp} is your Lost & Found verification code`,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [EMAIL SENT] Successfully sent OTP to ${toEmail}`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            const isTransient = isTransientNetworkError(error);
-
-            if (attempt < MAX_ATTEMPTS && isTransient) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [BREVO RETRY] Attempt ${attempt}/${MAX_ATTEMPTS} failed with ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-
-            break;
-        }
-    }
-
-    console.error('\n❌ [BREVO EMAIL ERROR]: Failed to send email.');
-    if (lastError.response) {
-        console.error('Brevo Response Status:', lastError.response.status);
-        console.error('Brevo Error Detail:', JSON.stringify(lastError.response.data, null, 2));
-    } else {
-        console.error('Error Details:', lastError.code || lastError.message);
-    }
-    console.error('─────────────────────────────────────────\n');
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: 'FoundIT - Account Verification OTP',
+        htmlContent,
+        logTag: 'OTP VERIFICATION',
+    });
 };
 
 /**
- * Sends a PASSWORD RESET OTP email via Brevo.
- * Deliberately different subject, copy and colour from the account-verification email
- * so users can distinguish the two flows.
- * @param {string} toEmail
- * @param {string} toName
- * @param {string} otp   – plain OTP (never stored, only used here for display)
+ * Sends a PASSWORD RESET OTP email.
  */
 export const sendPasswordResetEmail = async (toEmail, toName, otp) => {
-    if (isDevMode) {
+    const isProd = process.env.NODE_ENV === 'production';
+    const brevoKey = process.env.BREVO_API_KEY && !process.env.BREVO_API_KEY.startsWith('your_');
+    const resendKey = process.env.RESEND_API_KEY && !process.env.RESEND_API_KEY.startsWith('your_');
+
+    if (!isProd && !brevoKey && !resendKey) {
         console.log('\n🔐 [DEV PASSWORD RESET EMAIL] ────────────');
         console.log(`   To   : ${toName} <${toEmail}>`);
+        console.log(`   OTP  : ${otp}`);
         console.log(`   Exp  : 10 minutes`);
         console.log('─────────────────────────────────────────\n');
-        return { mode: 'development' };
+        return { mode: 'development', to: toEmail };
     }
 
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 32px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 Lost &amp; Found</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; background: #ffffff; border: 1px solid #E2E8F0; border-radius: 16px;">
+            <div style="text-align: center; margin-bottom: 28px;">
+                <h1 style="color: #4361EE; font-size: 26px; font-weight: 800; margin: 0;">🔍 FoundIT</h1>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">Reset your password</h2>
+            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">Reset Your Password</h2>
             <p style="color: #64748B; margin-bottom: 24px;">
-                Hi ${toName}, we received a request to reset the password for your Lost &amp; Found account.
-                Use the code below to continue. If you did not request a password reset, you can safely ignore this email.
+                Hi <strong>${toName}</strong>, we received a request to reset the password for your FoundIT account. Use the code below to continue:
             </p>
-            <div style="background: #FEF3C7; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
-                <p style="color: #92400E; font-size: 13px; font-weight: 700; margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.05em;">
-                    Password Reset Code
-                </p>
-                <span style="font-size: 42px; font-weight: 800; letter-spacing: 12px; color: #B45309;">${otp}</span>
+            <div style="background: #FEF3C7; border: 2px dashed #B45309; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                <span style="font-family: monospace, Courier; font-size: 40px; font-weight: 800; letter-spacing: 10px; color: #B45309;">${otp}</span>
             </div>
             <p style="color: #64748B; font-size: 14px;">⏱ This code expires in <strong>10 minutes</strong>.</p>
-            <p style="color: #64748B; font-size: 14px;">🔒 Never share this code with anyone, including Lost &amp; Found staff.</p>
-            <div style="background: #FEF2F2; border-radius: 8px; padding: 12px 16px; margin: 24px 0; border-left: 3px solid #F87171;">
-                <p style="color: #991B1B; font-size: 13px; margin: 0;">
-                    <strong>Security notice:</strong> If you did not request this, your account password has not been changed.
-                    Consider updating your password if you suspect unauthorized access.
-                </p>
-            </div>
+            <p style="color: #DC2626; font-size: 13px; font-weight: 600;">🔒 Never share this code with anyone.</p>
             <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">This email was sent by Lost &amp; Found. Do not reply to this message.</p>
+            <p style="color: #94A3B8; font-size: 12px;">If you did not request a password reset, you can safely ignore this email.</p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'Lost & Found',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: 'Reset your Lost & Found password',
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [PASSWORD RESET EMAIL SENT] to ${toEmail}`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            const isTransient = isTransientNetworkError(error);
-            if (attempt < MAX_ATTEMPTS && isTransient) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [RESET EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS} failed (${error.code || error.message}). Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error('\n❌ [PASSWORD RESET EMAIL ERROR]: Failed to send reset email.');
-    if (lastError.response) {
-        console.error('Brevo Status:', lastError.response.status);
-        console.error('Brevo Detail:', JSON.stringify(lastError.response.data, null, 2));
-    } else {
-        console.error('Error:', lastError.code || lastError.message);
-    }
-    console.error('─────────────────────────────────────────\n');
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: 'FoundIT - Password Reset Code',
+        htmlContent,
+        logTag: 'PASSWORD RESET',
+    });
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase 7 Step 2: Transactional Email Notifications
-// All 3 functions follow the same retry + brevoAgent pattern as above.
-// In dev mode: console-only. In prod: sent via Brevo.
-// Callers should fire-and-forget:  someEmail(...).catch(() => {});
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * Notifies the finder when a new ownership claim is submitted for their found item.
- * @param {string} toEmail    - Finder's email address
- * @param {string} toName     - Finder's display name
- * @param {string} itemTitle  - Title of the found item
- * @param {number} claimId    - The newly created claim ID
+ * Notifies finder of new ownership claim submission.
  */
 export const sendClaimSubmittedEmail = async (toEmail, toName, itemTitle, claimId) => {
-    if (isDevMode) {
-        console.log('\n📧 [DEV EMAIL - CLAIM SUBMITTED] ─────────────────────');
-        console.log(`   To      : ${toName} <${toEmail}>`);
-        console.log(`   Item    : "${itemTitle}"`);
-        console.log(`   Claim ID: ${claimId}`);
-        console.log('──────────────────────────────────────────────────────\n');
-        return { mode: 'development' };
-    }
-
-    const claimUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/claims/${claimId}`;
+    const claimUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/claims/${claimId}`;
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 28px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 Lost &amp; Found</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px;">
+            <h1 style="color: #4361EE; font-size: 24px; margin: 0 0 16px 0;">🔍 FoundIT</h1>
+            <h2 style="color: #0F172A; font-size: 18px;">📋 New Claim on Your Found Item</h2>
+            <p style="color: #64748B;">Hi <strong>${toName}</strong>, someone has submitted an ownership claim for your found item <strong>"${itemTitle}"</strong>.</p>
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${claimUrl}" style="background: #4361EE; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700;">Review Claim →</a>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">📋 New Claim on Your Found Item</h2>
-            <p style="color: #64748B; margin-bottom: 20px;">
-                Hi <strong>${toName}</strong>, someone has submitted an ownership claim for your found item
-                <strong>"${itemTitle}"</strong>.
-            </p>
-            <p style="color: #64748B; margin-bottom: 24px;">
-                Please log in to review the claim details, check the claimant's ownership proof, and submit your response.
-                Your feedback is an important part of the verification process.
-            </p>
-            <div style="text-align: center; margin-bottom: 28px;">
-                <a href="${claimUrl}"
-                   style="display: inline-block; background: #4361EE; color: #fff; text-decoration: none;
-                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
-                    Review Claim →
-                </a>
-            </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">
-                You received this email because you posted a found item on Lost &amp; Found.
-                If this is not relevant, you can safely ignore this message.
-            </p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'Lost & Found',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: 'New Claim on Your Found Item',
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [CLAIM SUBMITTED EMAIL] Sent to finder: ${toEmail}`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [CLAIM EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error(`❌ [CLAIM SUBMITTED EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: `FoundIT: New Claim on Your Found Item "${itemTitle}"`,
+        htmlContent,
+        logTag: 'CLAIM SUBMITTED',
+    });
 };
 
 /**
- * Notifies the claimant of the admin's final decision (APPROVED or REJECTED).
- * @param {string} toEmail        - Claimant's email
- * @param {string} toName         - Claimant's display name
- * @param {string} itemTitle      - Title of the found item
- * @param {number} claimId
- * @param {'APPROVED'|'REJECTED'} decision
- * @param {string} decisionReason - Admin's publicly-visible reason
+ * Notifies claimant of admin decision.
  */
 export const sendClaimDecisionEmail = async (toEmail, toName, itemTitle, claimId, decision, decisionReason) => {
-    if (isDevMode) {
-        console.log('\n📧 [DEV EMAIL - CLAIM DECISION] ──────────────────────');
-        console.log(`   To       : ${toName} <${toEmail}>`);
-        console.log(`   Decision : ${decision}`);
-        console.log(`   Item     : "${itemTitle}"`);
-        console.log(`   Reason   : ${decisionReason}`);
-        console.log('──────────────────────────────────────────────────────\n');
-        return { mode: 'development' };
-    }
-
     const isApproved = decision === 'APPROVED';
     const accentColor = isApproved ? '#059669' : '#DC2626';
-    const bgColor = isApproved ? '#ECFDF5' : '#FEF2F2';
-    const emoji = isApproved ? '🎉' : '📋';
-    const claimUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/claims/${claimId}`;
-    const subject = isApproved
-        ? 'Your Claim Has Been Approved 🎉'
-        : 'Your Claim Decision';
-
+    const claimUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/claims/${claimId}`;
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 28px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 Lost &amp; Found</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px;">
+            <h1 style="color: #4361EE; font-size: 24px; margin: 0 0 16px 0;">🔍 FoundIT</h1>
+            <h2 style="color: #0F172A; font-size: 18px;">Claim Decision for "${itemTitle}"</h2>
+            <p style="color: ${accentColor}; font-weight: 700; font-size: 16px;">
+                ${isApproved ? '✅ Your claim has been APPROVED.' : '❌ Your claim has been REJECTED.'}
+            </p>
+            ${decisionReason ? `<p style="color: #374151;"><strong>Reason:</strong> ${decisionReason}</p>` : ''}
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${claimUrl}" style="background: ${accentColor}; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700;">View Claim Details →</a>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">${emoji} Claim Decision for "${itemTitle}"</h2>
-            <p style="color: #64748B; margin-bottom: 20px;">Hi <strong>${toName}</strong>,</p>
-            <div style="background: ${bgColor}; border-radius: 10px; padding: 18px 20px; margin-bottom: 24px; border-left: 4px solid ${accentColor};">
-                <p style="color: ${accentColor}; font-weight: 700; font-size: 16px; margin: 0 0 8px 0;">
-                    ${isApproved ? '✅ Your claim has been APPROVED.' : '❌ Your claim has been REJECTED.'}
-                </p>
-                ${decisionReason ? `<p style="color: #374151; font-size: 14px; margin: 0;"><strong>Reason:</strong> ${decisionReason}</p>` : ''}
-            </div>
-            ${isApproved
-                ? '<p style="color: #64748B; margin-bottom: 20px;">Congratulations! The administrator has verified your ownership. Please log in to coordinate the return of the item with the finder.</p>'
-                : '<p style="color: #64748B; margin-bottom: 20px;">Unfortunately, your claim was not approved at this time. Please review the decision reason above. If you believe this was an error, please contact support.</p>'
-            }
-            <div style="text-align: center; margin-bottom: 28px;">
-                <a href="${claimUrl}"
-                   style="display: inline-block; background: ${accentColor}; color: #fff; text-decoration: none;
-                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
-                    View Claim Details →
-                </a>
-            </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">This decision was made by an administrator on the Lost &amp; Found platform.</p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'Lost & Found',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [CLAIM DECISION EMAIL] Sent to claimant: ${toEmail} (${decision})`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [DECISION EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error(`❌ [CLAIM DECISION EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: isApproved ? 'FoundIT: Your Claim Has Been Approved 🎉' : 'FoundIT: Your Claim Decision',
+        htmlContent,
+        logTag: 'CLAIM DECISION',
+    });
 };
 
 /**
- * Notifies a conversation participant that they received a new message.
- * @param {string} toEmail     - Recipient's email
- * @param {string} toName      - Recipient's display name
- * @param {string} senderName  - Display name of the person who sent the message
- * @param {string} itemTitle   - Title of the found item (context)
- * @param {number} claimId     - Claim ID (used to build the message link)
+ * Notifies conversation participant of new message.
  */
 export const sendNewMessageEmail = async (toEmail, toName, senderName, itemTitle, claimId) => {
-    if (isDevMode) {
-        console.log('\n📧 [DEV EMAIL - NEW MESSAGE] ─────────────────────────');
-        console.log(`   To     : ${toName} <${toEmail}>`);
-        console.log(`   From   : ${senderName}`);
-        console.log(`   Item   : "${itemTitle}"`);
-        console.log('──────────────────────────────────────────────────────\n');
-        return { mode: 'development' };
-    }
-
-    const msgUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/messages?claimId=${claimId}`;
-
+    const msgUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/messages?claimId=${claimId}`;
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 28px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 Lost &amp; Found</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px;">
+            <h1 style="color: #4361EE; font-size: 24px; margin: 0 0 16px 0;">🔍 FoundIT</h1>
+            <h2 style="color: #0F172A; font-size: 18px;">💬 New Message from ${senderName}</h2>
+            <p style="color: #64748B;">You received a message regarding <strong>"${itemTitle}"</strong>.</p>
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${msgUrl}" style="background: #4361EE; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700;">View Message →</a>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">💬 New Message</h2>
-            <p style="color: #64748B; margin-bottom: 20px;">
-                Hi <strong>${toName}</strong>, you have a new message from
-                <strong>${senderName}</strong> regarding the item <strong>"${itemTitle}"</strong>.
-            </p>
-            <div style="background: #EEF2FF; border-radius: 10px; padding: 16px 20px; margin-bottom: 24px; border-left: 4px solid #4361EE;">
-                <p style="color: #374151; font-size: 14px; margin: 0;">
-                    📌 <strong>Security reminder:</strong> Never share sensitive personal information
-                    (bank details, passwords, etc.) through messages on this platform.
-                </p>
-            </div>
-            <div style="text-align: center; margin-bottom: 28px;">
-                <a href="${msgUrl}"
-                   style="display: inline-block; background: #4361EE; color: #fff; text-decoration: none;
-                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
-                    View Message →
-                </a>
-            </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">
-                You received this email because you are a participant in a claim on the Lost &amp; Found platform.
-            </p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'Lost & Found',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: `New message from ${senderName} about "${itemTitle}"`,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [MESSAGE EMAIL] Sent to: ${toEmail}`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [MESSAGE EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error(`❌ [MESSAGE EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: `FoundIT: New message from ${senderName} about "${itemTitle}"`,
+        htmlContent,
+        logTag: 'NEW MESSAGE',
+    });
 };
 
 /**
- * Notifies the claimant that their claim submission was received and is under review.
- * @param {string} toEmail    - Claimant's email
- * @param {string} toName     - Claimant's display name
- * @param {string} itemTitle  - Title of the claimed item
- * @param {number} claimId    - The newly created claim ID
+ * Notifies claimant that their claim submission was received.
  */
 export const sendClaimConfirmationEmail = async (toEmail, toName, itemTitle, claimId) => {
-    if (isDevMode) {
-        console.log('\n📧 [DEV EMAIL - CLAIM CONFIRMATION] ──────────────────');
-        console.log(`   To      : ${toName} <${toEmail}>`);
-        console.log(`   Item    : "${itemTitle}"`);
-        console.log(`   Claim ID: ${claimId}`);
-        console.log('──────────────────────────────────────────────────────\n');
-        return { mode: 'development' };
-    }
-
-    const claimUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/claims/${claimId}`;
+    const claimUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/claims/${claimId}`;
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 28px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 Lost &amp; Found</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px;">
+            <h1 style="color: #4361EE; font-size: 24px; margin: 0 0 16px 0;">🔍 FoundIT</h1>
+            <h2 style="color: #0F172A; font-size: 18px;">📋 Claim Submitted Successfully</h2>
+            <p style="color: #64748B;">Hi <strong>${toName}</strong>, your ownership claim for <strong>"${itemTitle}"</strong> has been received and is under review.</p>
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${claimUrl}" style="background: #4361EE; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700;">View Claim →</a>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">📋 Claim Submitted Successfully</h2>
-            <p style="color: #64748B; margin-bottom: 20px;">
-                Hi <strong>${toName}</strong>, your ownership claim for the item
-                <strong>"${itemTitle}"</strong> has been received.
-            </p>
-            <p style="color: #64748B; margin-bottom: 24px;">
-                The finder who reported this item has been notified to review your proof. You will receive updates as the claim progresses through verification.
-            </p>
-            <div style="text-align: center; margin-bottom: 28px;">
-                <a href="${claimUrl}"
-                   style="display: inline-block; background: #4361EE; color: #fff; text-decoration: none;
-                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
-                    View Your Claim →
-                </a>
-            </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">
-                You received this email because you submitted an ownership claim on Lost &amp; Found.
-            </p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'Lost & Found',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: `Claim Submitted: "${itemTitle}"`,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [CLAIM CONFIRMATION EMAIL] Sent to claimant: ${toEmail}`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [CLAIM CONFIRMATION RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error(`❌ [CLAIM CONFIRMATION EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: `FoundIT: Claim Submitted for "${itemTitle}"`,
+        htmlContent,
+        logTag: 'CLAIM CONFIRMATION',
+    });
 };
 
 /**
- * Sends an email notification to the lost-item owner when a finder reports having found their item.
- * @param {string} toEmail
- * @param {string} toName
- * @param {string} finderName
- * @param {string} itemTitle
- * @param {number} recoveryId
+ * Notifies lost-item owner when a recovery match is submitted.
  */
 export const sendRecoverySubmittedEmail = async (toEmail, toName, finderName, itemTitle, recoveryId) => {
-    if (isDevMode) {
-        console.log('\n📧 [DEV EMAIL - RECOVERY SUBMITTED] ──────────────────');
-        console.log(`   To          : ${toName} <${toEmail}>`);
-        console.log(`   Finder      : ${finderName}`);
-        console.log(`   Item        : "${itemTitle}"`);
-        console.log(`   Recovery ID : #${recoveryId}`);
-        console.log('──────────────────────────────────────────────────────\n');
-        return { mode: 'development' };
-    }
-
-    const recoveryUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/recoveries/${recoveryId}`;
+    const recoveryUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/recoveries/${recoveryId}`;
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 28px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 FoundiT</h1>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px;">
+            <h1 style="color: #4361EE; font-size: 24px; margin: 0 0 16px 0;">🔍 FoundIT</h1>
+            <h2 style="color: #0F172A; font-size: 18px;">🎁 Someone Found Your Item!</h2>
+            <p style="color: #334155;">Hi <strong>${toName}</strong>, <strong>${finderName}</strong> reported finding an item matching your lost report <strong>"${itemTitle}"</strong>.</p>
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${recoveryUrl}" style="background: #4361EE; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700;">View Recovery Details →</a>
             </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">🎁 Great News! Someone May Have Found Your Item</h2>
-            <p style="color: #64748B; margin-bottom: 20px;">
-                Hi <strong>${toName}</strong>,
-            </p>
-            <p style="color: #334155; font-size: 15px; line-height: 1.6; margin-bottom: 20px;">
-                A community member (<strong>${finderName}</strong>) has reported finding an item matching your lost report <strong>"${itemTitle}"</strong>.
-            </p>
-            <div style="background: #EEF2FF; border-radius: 10px; padding: 18px 20px; margin-bottom: 24px; border-left: 4px solid #4361EE;">
-                <p style="color: #1E293B; font-weight: 700; font-size: 14px; margin: 0 0 6px 0;">
-                    Recovery Reference: #${String(recoveryId).padStart(4, '0')}
-                </p>
-                <p style="color: #475569; font-size: 13px; margin: 0;">
-                    The submission includes item condition, location details, and photographs. Our administrators are reviewing the evidence.
-                </p>
-            </div>
-            <div style="text-align: center; margin-bottom: 28px;">
-                <a href="${recoveryUrl}"
-                   style="display: inline-block; background: #4361EE; color: #fff; text-decoration: none;
-                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
-                    View Recovery Details →
-                </a>
-            </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">
-                You received this notification because you reported an item lost on FoundiT.
-            </p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'FoundiT',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: `Found Item Match: Someone found your "${itemTitle}"!`,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [RECOVERY SUBMITTED EMAIL] Sent to owner: ${toEmail}`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [RECOVERY SUBMITTED EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error(`❌ [RECOVERY SUBMITTED EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: `FoundIT: Someone found your "${itemTitle}"!`,
+        htmlContent,
+        logTag: 'RECOVERY SUBMITTED',
+    });
 };
 
 /**
- * Sends an email notification to finder or owner regarding admin recovery decision (Approval, Rejection, or Revocation).
- * Strictly omits internal administrative notes.
- * @param {string} toEmail
- * @param {string} toName
- * @param {string} itemTitle
- * @param {number} recoveryId
- * @param {'APPROVED'|'REJECTED'|'CANCELLED'} decision
- * @param {string|null} decisionReason
+ * Notifies participants of recovery decision.
  */
 export const sendRecoveryDecisionEmail = async (toEmail, toName, itemTitle, recoveryId, decision, decisionReason) => {
-    if (isDevMode) {
-        console.log('\n📧 [DEV EMAIL - RECOVERY DECISION] ──────────────────');
-        console.log(`   To          : ${toName} <${toEmail}>`);
-        console.log(`   Decision    : ${decision}`);
-        console.log(`   Item        : "${itemTitle}"`);
-        console.log(`   Reason      : ${decisionReason || 'None'}`);
-        console.log('──────────────────────────────────────────────────────\n');
-        return { mode: 'development' };
-    }
-
     const isApproved = decision === 'APPROVED';
-    const isRevoked = decision === 'CANCELLED';
-    const accentColor = isApproved ? '#059669' : (isRevoked ? '#D97706' : '#DC2626');
-    const bgColor = isApproved ? '#ECFDF5' : (isRevoked ? '#FFFBEB' : '#FEF2F2');
-
-    let titleText = `Recovery Report for "${itemTitle}"`;
-    let headingText = '';
-    let explanationText = '';
-
-    if (isApproved) {
-        headingText = '✅ Recovery Submission Approved!';
-        explanationText = 'The administrator has verified the match. You may now communicate to coordinate the secure handover of the item.';
-    } else if (isRevoked) {
-        headingText = '⚠️ Recovery Approval Revoked';
-        explanationText = 'The previous recovery approval for this item was revoked by the administrator after further review.';
-    } else {
-        headingText = '❌ Recovery Submission Rejected';
-        explanationText = 'After careful review, the administrator determined that this recovery report does not match the lost item.';
-    }
-
-    const recoveryUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/recoveries/${recoveryId}`;
+    const accentColor = isApproved ? '#059669' : '#DC2626';
+    const recoveryUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/recoveries/${recoveryId}`;
     const htmlContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
-            <div style="text-align: center; margin-bottom: 28px;">
-                <h1 style="color: #4361EE; font-size: 24px; margin: 0;">🔍 FoundiT</h1>
-            </div>
-            <h2 style="color: #0F172A; font-size: 20px; margin-bottom: 8px;">${titleText}</h2>
-            <p style="color: #64748B; margin-bottom: 20px;">Hi <strong>${toName}</strong>,</p>
-            <div style="background: ${bgColor}; border-radius: 10px; padding: 18px 20px; margin-bottom: 24px; border-left: 4px solid ${accentColor};">
-                <p style="color: ${accentColor}; font-weight: 700; font-size: 16px; margin: 0 0 8px 0;">
-                    ${headingText}
-                </p>
-                ${decisionReason ? `<p style="color: #374151; font-size: 14px; margin: 0;"><strong>Decision Reason:</strong> ${decisionReason}</p>` : ''}
-            </div>
-            <p style="color: #64748B; font-size: 14px; line-height: 1.6; margin-bottom: 24px;">
-                ${explanationText}
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px;">
+            <h1 style="color: #4361EE; font-size: 24px; margin: 0 0 16px 0;">🔍 FoundIT</h1>
+            <h2 style="color: #0F172A; font-size: 18px;">Recovery Decision for "${itemTitle}"</h2>
+            <p style="color: ${accentColor}; font-weight: 700;">
+                ${isApproved ? '✅ Recovery submission APPROVED!' : '❌ Recovery submission REJECTED.'}
             </p>
-            <div style="text-align: center; margin-bottom: 28px;">
-                <a href="${recoveryUrl}"
-                   style="display: inline-block; background: ${accentColor}; color: #fff; text-decoration: none;
-                          padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
-                    View Recovery Details →
-                </a>
+            ${decisionReason ? `<p style="color: #374151;"><strong>Reason:</strong> ${decisionReason}</p>` : ''}
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${recoveryUrl}" style="background: ${accentColor}; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700;">View Details →</a>
             </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px;">This decision was rendered by an administrator on FoundiT.</p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'FoundiT',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: `Update on Recovery #${recoveryId}: ${isApproved ? 'Approved 🎉' : (isRevoked ? 'Approval Revoked' : 'Decision Rendered')}`,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [RECOVERY DECISION EMAIL] Sent to: ${toEmail} (${decision})`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [RECOVERY DECISION EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
-    }
-
-    console.error(`❌ [RECOVERY DECISION EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    throw lastError;
+    return executeSendEmail({
+        toEmail,
+        toName,
+        subject: `FoundIT: Recovery Update #${recoveryId}`,
+        htmlContent,
+        logTag: 'RECOVERY DECISION',
+    });
 };
 
 /**
- * Send Handover notification email (Location published, scheduled, return confirmed, etc.)
+ * Send Handover notification email.
  */
 export const sendHandoverEmail = async ({
     toEmail,
@@ -859,80 +514,38 @@ export const sendHandoverEmail = async ({
     actionUrl,
     actionText = 'View Handover Details',
 }) => {
-    if (isDevMode) {
-        console.log(`\n========================================`);
-        console.log(`[DEV MODE] Handover Email to: ${toEmail}`);
-        console.log(`Subject: ${subject}`);
-        console.log(`Title: ${title}`);
-        console.log(`Message: ${message}`);
-        console.log(`Action: ${actionUrl}`);
-        console.log(`========================================\n`);
-        return { mode: 'development', to: toEmail };
-    }
-
+    const targetUrl = actionUrl || `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/handovers/${handoverId}`;
     const htmlContent = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #ffffff;">
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #ffffff;">
             <div style="text-align: center; margin-bottom: 24px;">
-                <h1 style="color: #4F46E5; margin: 0; font-size: 26px;">FoundiT</h1>
+                <h1 style="color: #4361EE; margin: 0; font-size: 26px;">🔍 FoundIT</h1>
                 <p style="color: #64748B; margin: 4px 0 0; font-size: 13px;">Item Recovery & Handover</p>
             </div>
-            <div style="background: #F8FAFC; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; border-left: 4px solid #4F46E5;">
+            <div style="background: #F8FAFC; border-radius: 8px; padding: 16px 20px; margin-bottom: 20px; border-left: 4px solid #4361EE;">
                 <h3 style="margin: 0 0 8px; color: #1E293B; font-size: 18px;">${title}</h3>
                 <p style="margin: 0; color: #475569; font-size: 14px; line-height: 1.5;">${message}</p>
             </div>
             ${itemTitle ? `<p style="color: #64748B; font-size: 14px; margin: 12px 0;"><strong>Item:</strong> ${itemTitle}</p>` : ''}
             <div style="text-align: center; margin: 28px 0;">
-                <a href="${actionUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/handovers/${handoverId}`}"
-                   style="display: inline-block; background: #4F46E5; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
+                <a href="${targetUrl}" style="display: inline-block; background: #4361EE; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">
                     ${actionText} →
                 </a>
             </div>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 24px 0;" />
-            <p style="color: #94A3B8; font-size: 12px; text-align: center;">FoundiT Secure Smart Handover System</p>
         </div>
     `;
 
-    const MAX_ATTEMPTS = 3;
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            await axios.post(
-                'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: {
-                        name: process.env.EMAIL_FROM_NAME || 'FoundiT',
-                        email: process.env.EMAIL_FROM,
-                    },
-                    to: [{ email: toEmail, name: toName }],
-                    subject: subject || `FoundiT Handover Update: ${title}`,
-                    htmlContent,
-                },
-                {
-                    headers: {
-                        'api-key': process.env.BREVO_API_KEY,
-                        'Content-Type': 'application/json',
-                    },
-                    httpsAgent: brevoAgent,
-                    timeout: 10000,
-                }
-            );
-            console.log(`✅ [HANDOVER EMAIL] Sent to: ${toEmail} (${title})`);
-            return { mode: 'production', to: toEmail };
-        } catch (error) {
-            lastError = error;
-            if (attempt < MAX_ATTEMPTS && isTransientNetworkError(error)) {
-                const delayMs = attempt * 1000;
-                console.warn(`⚠️ [HANDOVER EMAIL RETRY] Attempt ${attempt}/${MAX_ATTEMPTS}: ${error.code || error.message}. Retrying in ${delayMs}ms...`);
-                await sleep(delayMs);
-                continue;
-            }
-            break;
-        }
+    try {
+        return await executeSendEmail({
+            toEmail,
+            toName,
+            subject: subject || `FoundIT Handover Update: ${title}`,
+            htmlContent,
+            logTag: 'HANDOVER',
+        });
+    } catch (e) {
+        console.error(`❌ [HANDOVER EMAIL ERROR] ${e.message}`);
+        return { mode: 'failed', error: e.message };
     }
-
-    console.error(`❌ [HANDOVER EMAIL ERROR] Failed to send to ${toEmail}:`, lastError?.code || lastError?.message);
-    return { mode: 'failed', error: lastError?.message };
 };
 
 /**
@@ -950,74 +563,8 @@ export const sendConsolidatedHandoverPublishedEmail = async ({
     locationSummary,
     hasContactShared,
 }) => {
-    const subject = 'FoundiT – Handover Details Published for Your Recovered Item';
-    const actionUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/handovers/${handoverId}`;
-
-    if (isDevMode) {
-        console.log(`\n========================================`);
-        console.log(`[DEV MODE] Consolidated Handover Published Email to: ${toEmail}`);
-        console.log(`Subject: ${subject}`);
-        console.log(`Item: ${itemTitle} (Recovery #${recoveryId})`);
-        console.log(`Finder: ${finderName}`);
-        console.log(`Location: ${locationSummary}`);
-        console.log(`Schedule: ${scheduleDate || 'Pending'} at ${scheduleTime || 'Pending'}`);
-        console.log(`Contact: ${hasContactShared ? 'Available' : 'In-App Only'}`);
-        console.log(`URL: ${actionUrl}`);
-        console.log(`========================================\n`);
-        return { mode: 'development', to: toEmail };
-    }
-
-    const htmlContent = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #E2E8F0; border-radius: 12px; background: #ffffff;">
-            <div style="text-align: center; margin-bottom: 24px;">
-                <h1 style="color: #2563EB; margin: 0; font-size: 26px; font-weight: 900;">FoundiT</h1>
-                <p style="color: #64748B; margin: 4px 0 0; font-size: 13px;">Item Recovery & Handover Coordination</p>
-            </div>
-            <div style="background: #EFF6FF; border-radius: 8px; padding: 18px 20px; margin-bottom: 20px; border-left: 4px solid #2563EB;">
-                <h3 style="margin: 0 0 8px; color: #1E3A8A; font-size: 18px;">Handover Details Published</h3>
-                <p style="margin: 0; color: #3B82F6; font-size: 14px; line-height: 1.5;">
-                    Finder <strong>${finderName}</strong> has published the handover meeting details for your recovered item.
-                </p>
-            </div>
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 14px;">
-                <tr>
-                    <td style="padding: 8px 0; color: #64748B; width: 140px;">Item Name:</td>
-                    <td style="padding: 8px 0; font-weight: 700; color: #0F172A;">${itemTitle}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #64748B;">Recovery Ref:</td>
-                    <td style="padding: 8px 0; font-weight: 700; color: #0F172A;">#REC-${String(recoveryId).padStart(4, '0')}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #64748B;">Handover Method:</td>
-                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">In-Person Handover</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #64748B;">Meeting Location:</td>
-                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">${locationSummary || 'Location coordinates published on map'}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #64748B;">Proposed Schedule:</td>
-                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">${scheduleDate ? `${scheduleDate} at ${scheduleTime || ''}` : 'To be coordinated'}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; color: #64748B;">Finder Contact:</td>
-                    <td style="padding: 8px 0; font-weight: 600; color: #0F172A;">${hasContactShared ? 'Phone number provided in app' : 'Available via FoundiT Messages'}</td>
-                </tr>
-            </table>
-            <div style="text-align: center; margin: 30px 0;">
-                <a href="${actionUrl}"
-                   style="display: inline-block; background: #2563EB; color: #ffffff; text-decoration: none; padding: 13px 32px; border-radius: 8px; font-weight: 800; font-size: 15px; box-shadow: 0 4px 12px rgba(37,99,235,0.25);">
-                    Review & Verify Handover Details →
-                </a>
-            </div>
-            <p style="color: #94A3B8; font-size: 12px; line-height: 1.5; text-align: center;">
-                For security reasons, sensitive live GPS coordinates are only visible when authenticated on FoundiT.
-            </p>
-            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 20px 0;" />
-            <p style="color: #94A3B8; font-size: 11px; text-align: center;">FoundiT Smart Handover & Return Verification System</p>
-        </div>
-    `;
+    const subject = 'FoundIT – Handover Details Published for Your Recovered Item';
+    const actionUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/handovers/${handoverId}`;
 
     return sendHandoverEmail({
         toEmail,
@@ -1045,34 +592,30 @@ export const sendReturnCompletionEmails = async ({
     handoverId,
     completedAt = new Date(),
 }) => {
-    const feedbackUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/handovers/${handoverId}`;
+    const feedbackUrl = `${process.env.FRONTEND_URL || 'https://foundit-production-2e271b5d.up.railway.app'}/handovers/${handoverId}`;
     const dateStr = new Date(completedAt).toLocaleDateString('en-US', { dateStyle: 'medium' });
 
-    // 1. Email to Owner
     sendHandoverEmail({
         toEmail: ownerEmail,
         toName: ownerName,
-        subject: 'FoundiT – Your Lost Item Has Been Successfully Returned',
+        subject: 'FoundIT – Your Lost Item Has Been Successfully Returned',
         title: 'Your Lost Item Has Been Returned 🎉',
-        message: `Congratulations! Your item "${itemTitle}" (Recovery #${recoveryId}) has been successfully returned to you by finder ${finderName} on ${dateStr}. Please take a moment to rate your experience and send a note of appreciation.`,
+        message: `Congratulations! Your item "${itemTitle}" (Recovery #${recoveryId}) has been successfully returned to you by finder ${finderName} on ${dateStr}.`,
         itemTitle,
         handoverId,
         actionUrl: feedbackUrl,
         actionText: 'Rate Finder & Leave Feedback',
     }).catch(e => console.error('Error sending owner return email:', e.message));
 
-    // 2. Email to Finder
     sendHandoverEmail({
         toEmail: finderEmail,
         toName: finderName,
-        subject: 'FoundiT – Your Handover Has Been Successfully Completed',
+        subject: 'FoundIT – Your Handover Has Been Successfully Completed',
         title: 'Thank You for Completing the Return! 🌟',
-        message: `Owner ${ownerName} has officially verified physical receipt of "${itemTitle}" (Recovery #${recoveryId}) on ${dateStr}. Thank you for your honesty and community spirit! Please share your feedback on the handover experience.`,
+        message: `Owner ${ownerName} has officially verified physical receipt of "${itemTitle}" (Recovery #${recoveryId}) on ${dateStr}. Thank you for your honesty and community spirit!`,
         itemTitle,
         handoverId,
         actionUrl: feedbackUrl,
         actionText: 'Rate Handover Experience',
     }).catch(e => console.error('Error sending finder return email:', e.message));
 };
-
-
