@@ -47,6 +47,18 @@ api.interceptors.request.use((config) => {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
   }
+
+  // When sending FormData, remove Content-Type so Axios/browser automatically
+  // generates multipart/form-data with the correct boundary parameter
+  if (config.data instanceof FormData && config.headers) {
+    delete config.headers['Content-Type'];
+    delete config.headers['content-type'];
+    if (typeof config.headers.delete === 'function') {
+      config.headers.delete('Content-Type');
+      config.headers.delete('content-type');
+    }
+  }
+
   return config;
 });
 

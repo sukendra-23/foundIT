@@ -92,6 +92,12 @@
   --navbar-height:  68px;
   --content-pad:    var(--space-6);
 
+  /* Breakpoints (for reference in JS / docs) */
+  --bp-sm:   480px;
+  --bp-md:   768px;
+  --bp-lg:  1024px;
+  --bp-xl:  1200px;
+
   /* Z-indexes */
   --z-dropdown: 50;
   --z-navbar:   100;
@@ -102,4 +108,7 @@
 /* Responsive content padding */
 @media (max-width: 640px) {
   :root { --content-pad: var(--space-4); }
+}
+@media (max-width: 480px) {
+  :root { --content-pad: var(--space-3); }
 }

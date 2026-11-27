@@ -228,3 +228,13 @@
   .hero-stats { gap: var(--space-4); }
   .cta-banner-inner { text-align: center; justify-content: center; }
 }
+
+@media (max-width: 480px) {
+  .hero-blob-1 { width: 280px; height: 280px; }
+  .hero-blob-2 { width: 220px; height: 220px; }
+  .hero-blob-3 { width: 160px; height: 160px; }
+  .hero-search { padding: 0 4px; }
+  .search-btn { padding: 10px 14px; font-size: var(--font-size-sm); }
+  .stat-divider { display: none; }
+  .cta-banner-inner { padding: var(--space-6); }
+}

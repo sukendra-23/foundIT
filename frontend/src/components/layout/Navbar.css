@@ -189,6 +189,9 @@
   padding: var(--space-4);
   z-index: calc(var(--z-navbar) - 1);
   box-shadow: var(--shadow-lg);
+  max-height: calc(100dvh - var(--navbar-height));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .mobile-menu .navbar-links {
   flex-direction: column;
@@ -206,7 +209,8 @@
 .mobile-user-info { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 4px; }
 
 .mobile-link {
-  display: block; padding: 10px 12px;
+  display: flex; align-items: center; padding: 12px 12px;
+  min-height: 44px;
   border-radius: var(--radius-md);
   font-size: var(--font-size-base);
   font-weight: var(--font-medium);

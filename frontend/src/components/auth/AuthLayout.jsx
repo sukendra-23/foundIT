@@ -99,6 +99,11 @@ const AuthLayout = ({ children, title, subtitle, switchText, switchLinkText, swi
         .auth-layout-grid { grid-template-columns: 1fr !important; }
         .auth-right-panel { display: none !important; }
       }
+      @media (max-width: 480px) {
+        .auth-layout-grid > div:first-child {
+          padding: var(--space-6) var(--space-4) !important;
+        }
+      }
     `}</style>
   </div>
 );

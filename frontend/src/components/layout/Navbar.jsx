@@ -79,6 +79,16 @@ const Navbar = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Lock body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileOpen) {
+      document.body.classList.add('mobile-menu-open');
+    } else {
+      document.body.classList.remove('mobile-menu-open');
+    }
+    return () => document.body.classList.remove('mobile-menu-open');
+  }, [mobileOpen]);
+
   const handleLogout = () => {
     logout();
     setDropdownOpen(false);
@@ -248,6 +258,11 @@ const Navbar = () => {
                   </span>
                 )}
               </Link>
+              {/* Notification Bell in mobile menu */}
+              <div style={{ padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 14, color: 'var(--color-gray-500)', fontWeight: 500 }}>Notifications</span>
+                <NotificationBell />
+              </div>
               {user.role === 'ADMIN' && (
                 <Link to="/admin" className="mobile-link" onClick={() => setMobileOpen(false)} style={{ color: '#7C3AED', fontWeight: 700 }}>
                   Admin Portal

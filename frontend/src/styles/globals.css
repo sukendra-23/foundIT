@@ -5,7 +5,11 @@
 /* ── Reset ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { font-size: 16px; scroll-behavior: smooth; }
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
 
 body {
   font-family: var(--font-sans);
@@ -14,6 +18,12 @@ body {
   background-color: var(--color-gray-50);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Lock body scroll when mobile menu is open */
+body.mobile-menu-open {
+  overflow: hidden;
 }
 
 a { color: var(--color-primary); text-decoration: none; transition: color var(--transition-fast); }
@@ -117,4 +127,18 @@ h1,h2,h3,h4,h5,h6 { line-height: 1.25; font-weight: var(--font-bold); color: var
 }
 @media (min-width: 769px) {
   .hidden-desktop { display: none !important; }
+}
+
+/* ── Mobile-first overflow guard ────────────────────────────────────── */
+.container,
+.page-wrapper {
+  max-width: 100%;
+}
+
+/* Prevent flex/grid children from overflowing */
+* { min-width: 0; }
+
+@media (max-width: 480px) {
+  .section { padding: var(--space-12) 0; }
+  .section-sm { padding: var(--space-8) 0; }
 }

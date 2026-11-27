@@ -7,8 +7,24 @@
 
 .handover-container {
   max-width: 1080px;
+  width: 100%;
   margin: 0 auto;
   padding: 32px 20px 60px;
+}
+
+@media (max-width: 600px) {
+  .handover-container {
+    padding: 16px 12px 48px;
+  }
+  .handover-title { font-size: 20px; }
+  .handover-stepper {
+    padding: 16px 12px;
+    gap: 0;
+  }
+  .stepper-step { min-width: 80px; }
+  .stepper-label { font-size: 11px; }
+  .handover-card { padding: 16px; }
+  .modal-card { padding: 20px 16px; max-width: 95vw; }
 }
 
 /* Header */
@@ -194,7 +210,7 @@
 .modal-card {
   background: #fff;
   border-radius: var(--radius-2xl);
-  max-width: 520px;
+  max-width: min(520px, 95vw);
   width: 100%;
   padding: 28px;
   box-shadow: var(--shadow-xl);

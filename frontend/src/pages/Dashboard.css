@@ -134,3 +134,11 @@
   .dashboard-name { font-size: var(--font-size-3xl); }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+@media (max-width: 480px) {
+  .dashboard-name { font-size: var(--font-size-2xl); }
+  .stats-grid { grid-template-columns: 1fr; }
+  .actions-grid { grid-template-columns: 1fr; }
+  .dashboard-header { flex-direction: column; align-items: flex-start; }
+  .dashboard-header-actions { width: 100%; }
+}
