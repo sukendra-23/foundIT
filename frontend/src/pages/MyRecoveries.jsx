@@ -101,17 +101,17 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-// ─── Metric Summary Card ──────────────────────────────────────────────────────
+// ─── Metric Summary Card (Preserved from recovery dashboard) ──────────────────
 const MetricCard = ({ title, count, icon, subtitle, color, bgGradient, borderColor }) => (
   <div style={{
     background: bgGradient || '#fff',
     borderRadius: 'var(--radius-xl)',
     border: `1px solid ${borderColor || 'var(--color-gray-200)'}`,
-    padding: '18px 20px',
+    padding: '16px 18px',
     boxShadow: 'var(--shadow-sm)',
     display: 'flex',
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
     transition: 'transform 0.2s ease, box-shadow 0.2s ease',
     cursor: 'default',
   }}
@@ -125,14 +125,14 @@ const MetricCard = ({ title, count, icon, subtitle, color, bgGradient, borderCol
   }}
   >
     <div style={{
-      width: 48,
-      height: 48,
+      width: 44,
+      height: 44,
       borderRadius: 12,
       background: '#fff',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      fontSize: 22,
+      fontSize: 20,
       boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
       flexShrink: 0,
       border: '1px solid rgba(0,0,0,0.04)'
@@ -140,7 +140,7 @@ const MetricCard = ({ title, count, icon, subtitle, color, bgGradient, borderCol
       {icon}
     </div>
     <div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: color || 'var(--color-gray-900)', lineHeight: 1.1 }}>
+      <div style={{ fontSize: 22, fontWeight: 800, color: color || 'var(--color-gray-900)', lineHeight: 1.1 }}>
         {count}
       </div>
       <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-gray-800)', marginTop: 2 }}>
@@ -153,7 +153,7 @@ const MetricCard = ({ title, count, icon, subtitle, color, bgGradient, borderCol
   </div>
 );
 
-// ─── Recovery Card ────────────────────────────────────────────────────────────
+// ─── Recovery Card (Styled to match ClaimCard in MyClaims) ────────────────────
 const RecoveryCard = ({ recovery, tab, onView }) => {
   const [imageError, setImageError] = useState(false);
 
@@ -170,210 +170,96 @@ const RecoveryCard = ({ recovery, tab, onView }) => {
     ? (recovery.finderName || recovery.finder_name || 'Finder')
     : (recovery.ownerName || recovery.owner_name || 'Item Owner');
 
-  // Image resolution hierarchy:
-  // 1. Finder's primary uploaded photo for this recovery
-  // 2. Lost item original photo
   const displayImage = !imageError
     ? (recovery.primaryImage || recovery.primary_image || recovery.lostItemImage || recovery.lost_item_image)
     : null;
 
   const categoryIcon = CATEGORY_ICONS[category] || '📦';
+  const cfg = STATUS_CONFIG[status] || { dot: '#64748B', label: status };
 
   return (
     <div
       style={{
         background: '#fff',
-        border: '1px solid var(--color-gray-200)',
         borderRadius: 'var(--radius-2xl)',
+        border: '1px solid var(--color-gray-200)',
         boxShadow: 'var(--shadow-sm)',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        transition: 'transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease',
+        transition: 'transform 0.2s, box-shadow 0.2s'
       }}
       onMouseEnter={e => {
-        e.currentTarget.style.transform = 'translateY(-4px)';
-        e.currentTarget.style.boxShadow = 'var(--shadow-lg)';
-        e.currentTarget.style.borderColor = 'var(--color-primary-muted)';
+        e.currentTarget.style.transform = 'translateY(-3px)';
+        e.currentTarget.style.boxShadow = 'var(--shadow-md)';
       }}
       onMouseLeave={e => {
         e.currentTarget.style.transform = 'translateY(0)';
         e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
-        e.currentTarget.style.borderColor = 'var(--color-gray-200)';
       }}
     >
-      {/* ── Top Image Banner ────────────────────────────── */}
-      <div style={{
-        position: 'relative',
-        height: 160,
-        background: 'linear-gradient(135deg, #F8FAFC 0%, #EEF2FF 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-      }}>
+      {/* ── Card Image Banner ── */}
+      <div style={{ position: 'relative', height: 140, background: 'var(--color-gray-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {displayImage ? (
           <img
             src={displayImage}
             alt={itemName}
             onError={() => setImageError(true)}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              transition: 'transform 0.3s ease',
-            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         ) : (
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--color-gray-400)',
-            gap: 4
-          }}>
-            <span style={{ fontSize: 44 }}>{categoryIcon}</span>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-gray-400)' }}>
-              No image uploaded
-            </span>
-          </div>
+          <span style={{ fontSize: 38, opacity: 0.35 }}>{categoryIcon}</span>
         )}
-
-        {/* Top-left ID badge */}
         <div style={{
           position: 'absolute',
           top: 10,
           left: 10,
-          background: 'rgba(15, 23, 42, 0.75)',
+          background: 'rgba(0,0,0,0.65)',
           color: '#fff',
           fontSize: 11,
-          fontWeight: 800,
-          padding: '3px 9px',
+          fontWeight: 700,
+          padding: '3px 8px',
           borderRadius: 6,
-          backdropFilter: 'blur(4px)',
-          letterSpacing: '0.04em'
+          backdropFilter: 'blur(2px)'
         }}>
-          #REC-{String(id).padStart(4, '0')}
+          REC-{String(id).padStart(4, '0')}
         </div>
-
-        {/* Top-right status badge */}
         <div style={{ position: 'absolute', top: 10, right: 10 }}>
           <StatusBadge status={status} />
         </div>
       </div>
 
-      {/* ── Card Body ──────────────────────────────────── */}
-      <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', flex: 1, gap: 12 }}>
-        {/* Title and context */}
-        <div>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginBottom: 4,
-            flexWrap: 'wrap'
-          }}>
-            <span style={{
-              fontSize: 11,
-              fontWeight: 800,
-              textTransform: 'uppercase',
-              letterSpacing: '0.06em',
-              color: isReceived ? '#059669' : 'var(--color-primary)',
-              background: isReceived ? '#ECFDF5' : '#EEF2FF',
-              padding: '2px 8px',
-              borderRadius: 6
-            }}>
-              {isReceived ? '📬 Incoming Recovery' : '🎁 Your Submission'}
-            </span>
-            <span style={{
-              fontSize: 11,
-              color: 'var(--color-gray-500)',
-              background: 'var(--color-gray-100)',
-              padding: '2px 8px',
-              borderRadius: 6,
-              fontWeight: 600
-            }}>
-              {category}
-            </span>
-          </div>
+      {/* ── Content ── */}
+      <div style={{ padding: '18px 20px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-primary)', textTransform: 'uppercase', marginBottom: 4 }}>
+          {category} {location ? `· 📍 ${location}` : ''}
+        </div>
+        <h3 style={{ fontSize: 16, fontWeight: 800, color: 'var(--color-gray-900)', margin: '0 0 6px 0', lineHeight: 1.3 }}>
+          {itemName}
+        </h3>
 
-          <h3 style={{
-            margin: 0,
-            fontSize: 17,
-            fontWeight: 800,
-            color: 'var(--color-gray-900)',
-            lineHeight: 1.3
-          }}>
-            {itemName}
-          </h3>
-
-          <div style={{
-            fontSize: 12,
-            color: 'var(--color-gray-500)',
-            marginTop: 4,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}>
-            Matching Lost Report: <strong style={{ color: 'var(--color-gray-700)' }}>"{lostTitle}"</strong>
-          </div>
+        <div style={{ fontSize: 12, color: 'var(--color-gray-600)', marginBottom: 8 }}>
+          {isReceived ? '👤 Found by: ' : '👤 Owned by: '}
+          <strong>{otherParty}</strong>
         </div>
 
-        {/* Key Information Grid */}
-        <div style={{
-          background: 'var(--color-gray-50)',
-          borderRadius: 'var(--radius-lg)',
-          padding: '12px 14px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 7,
-          fontSize: 12.5,
-          border: '1px solid var(--color-gray-200)',
-          marginTop: 'auto'
+        <p style={{
+          fontSize: 13,
+          color: 'var(--color-gray-600)',
+          margin: '0 0 14px 0',
+          lineHeight: 1.5,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden'
         }}>
-          {location && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: 'var(--color-gray-400)', width: 16 }}>📍</span>
-              <span style={{ color: 'var(--color-gray-500)', fontWeight: 600, minWidth: 60 }}>Found:</span>
-              <span style={{ color: 'var(--color-gray-800)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {location}
-              </span>
-            </div>
-          )}
+          Matching Lost Report: "{lostTitle}"
+        </p>
 
-          {date && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: 'var(--color-gray-400)', width: 16 }}>📅</span>
-              <span style={{ color: 'var(--color-gray-500)', fontWeight: 600, minWidth: 60 }}>Date:</span>
-              <span style={{ color: 'var(--color-gray-800)', fontWeight: 500 }}>
-                {formatDate(date)}
-              </span>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: 'var(--color-gray-400)', width: 16 }}>👤</span>
-            <span style={{ color: 'var(--color-gray-500)', fontWeight: 600, minWidth: 60 }}>
-              {isReceived ? 'Finder:' : 'Owner:'}
-            </span>
-            <span style={{ color: 'var(--color-gray-800)', fontWeight: 600 }}>
-              {otherParty}
-            </span>
-          </div>
-
-          {submittedAt && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--color-gray-400)', borderTop: '1px solid var(--color-gray-200)', paddingTop: 6, marginTop: 2 }}>
-              <span>⏱️ Submitted:</span>
-              <span>{formatDate(submittedAt)}</span>
-            </div>
-          )}
-        </div>
-
-        {/* ── Handover Notification Banner for Approved Recoveries ──────── */}
+        {/* Smart Handover Callout for Approved Recoveries */}
         {status === 'APPROVED' && (
           <div style={{
-            marginBottom: 8,
+            marginBottom: 12,
             padding: '6px 12px',
             background: '#ECFDF5',
             borderRadius: 'var(--radius-md)',
@@ -386,42 +272,51 @@ const RecoveryCard = ({ recovery, tab, onView }) => {
             fontWeight: 700
           }}>
             <span>🤝 Smart Handover Active</span>
-            <span style={{ fontSize: 11, color: '#059669' }}>Physical return open</span>
+            <span style={{ fontSize: 11, color: '#059669' }}>Ready for physical return</span>
           </div>
         )}
 
-        {/* ── Action Button ─────────────────────────────── */}
-        <button
-          onClick={() => onView(id)}
-          style={{
-            marginTop: 4,
-            padding: '10px 16px',
-            background: 'var(--color-primary)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 'var(--radius-lg)',
-            fontWeight: 700,
-            fontSize: 13,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            boxShadow: '0 2px 8px rgba(67, 97, 238, 0.22)',
-            transition: 'all 0.18s ease'
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.background = 'var(--color-primary-dark)';
-            e.currentTarget.style.boxShadow = '0 4px 12px rgba(67, 97, 238, 0.35)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.background = 'var(--color-primary)';
-            e.currentTarget.style.boxShadow = '0 2px 8px rgba(67, 97, 238, 0.22)';
-          }}
-        >
-          <span>View Recovery Journey</span>
-          <span>→</span>
-        </button>
+        {/* Progress indicator pill */}
+        <div style={{
+          marginTop: 'auto',
+          padding: '8px 12px',
+          borderRadius: 'var(--radius-lg)',
+          background: 'var(--color-gray-50)',
+          border: '1px solid var(--color-gray-200)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 14
+        }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: cfg.dot }} />
+          <div style={{ fontSize: 12, fontWeight: 700, color: cfg.color || 'var(--color-gray-700)' }}>
+            {cfg.label}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--color-gray-100)', paddingTop: 12 }}>
+          <div style={{ fontSize: 11, color: 'var(--color-gray-400)' }}>
+            {submittedAt ? `Filed: ${formatDate(submittedAt)}` : (date ? `Found: ${formatDate(date)}` : '')}
+          </div>
+          <button
+            onClick={() => onView(id)}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: 13,
+              fontWeight: 700,
+              color: 'var(--color-primary)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: 0
+            }}
+          >
+            {isReceived ? 'Review Recovery' : 'Track Details'} →
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -448,15 +343,13 @@ const MyRecoveries = () => {
     try {
       const [subRes, recRes] = await Promise.all([
         recoveryApi.getMySubmissions(),
-        recoveryApi.getReceived(),
+        recoveryApi.getReceivedRecoveries()
       ]);
-      const subList = Array.isArray(subRes.data) ? subRes.data : (subRes.data?.data || []);
-      const recList = Array.isArray(recRes.data) ? recRes.data : (recRes.data?.data || []);
-      setSubmissions(subList);
-      setReceived(recList);
+      setSubmissions(subRes.data.data || []);
+      setReceived(recRes.data.data || []);
     } catch (err) {
       console.error('Failed to load recoveries:', err);
-      setError('Unable to load recovery submissions. Please check your connection and try again.');
+      setError('Unable to load your recovery submissions. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -466,56 +359,58 @@ const MyRecoveries = () => {
     fetchData();
   }, [fetchData]);
 
-  // Current list depending on active tab
-  const currentList = tab === 'submissions' ? submissions : received;
+  // ── Active list calculation ────────────────────────────────────────────────
+  const rawList = tab === 'submissions' ? submissions : received;
 
-  // ── Summary metrics calculation ─────────────────────────────────────────────
+  // ── Metric calculation ─────────────────────────────────────────────────────
   const metrics = useMemo(() => {
-    const list = currentList;
-    const total = list.length;
+    const list = rawList;
     const pending = list.filter(r => r.status === 'PENDING' || r.status === 'UNDER_REVIEW').length;
     const approved = list.filter(r => r.status === 'APPROVED').length;
     const closed = list.filter(r => r.status === 'REJECTED' || r.status === 'CANCELLED').length;
-    return { total, pending, approved, closed };
-  }, [currentList]);
+    return {
+      total: list.length,
+      pending,
+      approved,
+      closed
+    };
+  }, [rawList]);
 
-  // ── Search, filter & sort ───────────────────────────────────────────────────
+  // ── Filtering & Sorting ────────────────────────────────────────────────────
   const filteredList = useMemo(() => {
-    let result = [...currentList];
+    let result = [...rawList];
 
-    // Status filter
     if (filter !== 'ALL') {
       result = result.filter(r => r.status === filter);
     }
 
-    // Search query filter (matches item name, lost title, location, or recovery id)
     if (search.trim()) {
-      const q = search.trim().toLowerCase();
+      const q = search.toLowerCase().trim();
       result = result.filter(r => {
-        const idMatch = String(r.id).includes(q) || `rec-${r.id}`.includes(q);
-        const nameMatch = (r.finderItemName || r.item_name || '').toLowerCase().includes(q);
-        const lostMatch = (r.lostItemTitle || r.lost_title || '').toLowerCase().includes(q);
-        const locMatch = (r.foundLocation || r.found_location || '').toLowerCase().includes(q);
-        return idMatch || nameMatch || lostMatch || locMatch;
+        const name = (r.finderItemName || r.finder_item_name || r.item_name || '').toLowerCase();
+        const lost = (r.lostItemTitle || r.lost_item_title || r.lost_title || '').toLowerCase();
+        const loc = (r.foundLocation || r.found_location || '').toLowerCase();
+        const city = (r.foundCity || r.city || r.found_city || '').toLowerCase();
+        const idStr = String(r.id);
+        return name.includes(q) || lost.includes(q) || loc.includes(q) || city.includes(q) || idStr.includes(q);
       });
     }
 
-    // Sorting
     result.sort((a, b) => {
-      const timeA = new Date(a.createdAt || a.created_at || 0).getTime();
-      const timeB = new Date(b.createdAt || b.created_at || 0).getTime();
-      const updateA = new Date(a.updatedAt || a.updated_at || a.createdAt || 0).getTime();
-      const updateB = new Date(b.updatedAt || b.updated_at || b.createdAt || 0).getTime();
-
-      if (sortBy === 'oldest') return timeA - timeB;
-      if (sortBy === 'updated') return updateB - updateA;
-      return timeB - timeA; // default 'newest'
+      if (sortBy === 'newest') {
+        return new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0);
+      }
+      if (sortBy === 'oldest') {
+        return new Date(a.createdAt || a.created_at || 0) - new Date(b.createdAt || b.created_at || 0);
+      }
+      if (sortBy === 'updated') {
+        return new Date(b.updatedAt || b.updated_at || 0) - new Date(a.updatedAt || a.updated_at || 0);
+      }
+      return 0;
     });
 
     return result;
-  }, [currentList, filter, search, sortBy]);
-
-  const hasActiveFilters = filter !== 'ALL' || search.trim() !== '' || sortBy !== 'newest';
+  }, [rawList, filter, search, sortBy]);
 
   const clearFilters = () => {
     setFilter('ALL');
@@ -523,51 +418,30 @@ const MyRecoveries = () => {
     setSortBy('newest');
   };
 
-  return (
-    <div style={{ background: 'var(--color-gray-50)', minHeight: '100vh', display: 'flex', flexDirection: 'column', width: '100%' }}>
-      <Navbar />
-      <PageContainer maxWidth="1140px" style={{ paddingTop: '100px', paddingBottom: 'var(--space-20)', flex: 1 }}>
+  const hasActiveFilters = filter !== 'ALL' || search.trim() !== '' || sortBy !== 'newest';
 
-        {/* ── 1. Page Header ──────────────────────────────────────────────── */}
+  return (
+    <div style={{ background: 'var(--color-gray-50)', minHeight: '100vh' }}>
+      <Navbar />
+
+      <PageContainer style={{ paddingTop: '100px', paddingBottom: 'var(--space-16)' }}>
+        {/* ── 1. Page Header (Matches MyClaims structure) ─────────────────── */}
         <div style={{ marginBottom: 'var(--space-8)' }}>
-          <div style={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: 'var(--color-primary)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            marginBottom: 6,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6
-          }}>
-            <span>🎁</span>
-            <span>RECOVERY DASHBOARD</span>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+            Phase 7 Recovery Verification
           </div>
-          <h1 style={{
-            fontSize: 'var(--font-size-3xl)',
-            fontWeight: 800,
-            color: 'var(--color-gray-900)',
-            margin: '0 0 8px 0',
-            letterSpacing: '-0.02em'
-          }}>
-            My Recoveries
+          <h1 style={{ fontSize: 'var(--font-size-3xl)', fontWeight: 800, color: 'var(--color-gray-900)' }}>
+            My Recoveries &amp; Handover
           </h1>
-          <p style={{
-            color: 'var(--color-gray-500)',
-            fontSize: 'var(--font-size-base)',
-            maxWidth: 680,
-            margin: 0,
-            lineHeight: 1.5
-          }}>
+          <p style={{ color: 'var(--color-gray-500)', fontSize: 'var(--font-size-base)', maxWidth: 640 }}>
             Track the items you have found and manage recovery submissions for items you have lost.
           </p>
         </div>
 
-        {/* ── 2. Metric Summary Cards ─────────────────────────────────────── */}
+        {/* ── 2. Metric Summary Cards (Dashboard preserved) ───────────────── */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
           gap: 16,
           marginBottom: 'var(--space-8)'
         }}>
@@ -609,103 +483,84 @@ const MyRecoveries = () => {
           />
         </div>
 
-        {/* ── 3. Tabs & Controls Bar ──────────────────────────────────────── */}
+        {/* ── 3. Tabs & Filter Row (Matches MyClaims tab presentation) ─────── */}
         <div style={{
-          background: '#fff',
-          borderRadius: 'var(--radius-2xl)',
-          padding: '16px 20px',
-          border: '1px solid var(--color-gray-200)',
-          boxShadow: 'var(--shadow-sm)',
-          marginBottom: 'var(--space-6)'
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 16,
+          marginBottom: 'var(--space-6)',
+          borderBottom: '1px solid var(--color-gray-200)',
+          paddingBottom: 12
         }}>
           {/* Tab buttons */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 12,
-            borderBottom: '1px solid var(--color-gray-200)',
-            paddingBottom: 14,
-            marginBottom: 16
-          }}>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button
-                onClick={() => { setTab('submissions'); setFilter('ALL'); }}
-                style={{
-                  padding: '9px 18px',
-                  borderRadius: 'var(--radius-lg)',
-                  border: 'none',
-                  background: tab === 'submissions' ? 'var(--color-primary)' : 'var(--color-gray-100)',
-                  color: tab === 'submissions' ? '#fff' : 'var(--color-gray-700)',
-                  fontWeight: 700,
-                  fontSize: 13.5,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  boxShadow: tab === 'submissions' ? '0 4px 12px rgba(67, 97, 238, 0.25)' : 'none',
-                  transition: 'all 0.18s ease'
-                }}
-              >
-                <span>🎁 My Submissions</span>
-                <span style={{
-                  background: tab === 'submissions' ? 'rgba(255,255,255,0.25)' : 'var(--color-gray-200)',
-                  color: tab === 'submissions' ? '#fff' : 'var(--color-gray-800)',
-                  padding: '1px 8px',
-                  borderRadius: 999,
-                  fontSize: 12,
-                  fontWeight: 800
-                }}>
-                  {submissions.length}
-                </span>
-              </button>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => { setTab('submissions'); setFilter('ALL'); }}
+              style={{
+                padding: '10px 20px',
+                border: 'none',
+                background: tab === 'submissions' ? 'var(--color-primary)' : 'var(--color-gray-100)',
+                color: tab === 'submissions' ? '#fff' : 'var(--color-gray-700)',
+                borderRadius: 'var(--radius-lg)',
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                transition: 'all 0.2s'
+              }}
+            >
+              <span>🎁 My Submissions</span>
+              <span style={{
+                background: tab === 'submissions' ? 'rgba(255,255,255,0.25)' : 'var(--color-gray-200)',
+                padding: '2px 8px', borderRadius: 12, fontSize: 11
+              }}>
+                {submissions.length}
+              </span>
+            </button>
 
-              <button
-                onClick={() => { setTab('received'); setFilter('ALL'); }}
-                style={{
-                  padding: '9px 18px',
-                  borderRadius: 'var(--radius-lg)',
-                  border: 'none',
-                  background: tab === 'received' ? '#059669' : 'var(--color-gray-100)',
-                  color: tab === 'received' ? '#fff' : 'var(--color-gray-700)',
-                  fontWeight: 700,
-                  fontSize: 13.5,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  boxShadow: tab === 'received' ? '0 4px 12px rgba(5, 150, 105, 0.25)' : 'none',
-                  transition: 'all 0.18s ease'
-                }}
-              >
-                <span>📬 Received Recoveries</span>
-                <span style={{
-                  background: tab === 'received' ? 'rgba(255,255,255,0.25)' : 'var(--color-gray-200)',
-                  color: tab === 'received' ? '#fff' : 'var(--color-gray-800)',
-                  padding: '1px 8px',
-                  borderRadius: 999,
-                  fontSize: 12,
-                  fontWeight: 800
-                }}>
-                  {received.length}
-                </span>
-              </button>
-            </div>
+            <button
+              onClick={() => { setTab('received'); setFilter('ALL'); }}
+              style={{
+                padding: '10px 20px',
+                border: 'none',
+                background: tab === 'received' ? 'var(--color-primary)' : 'var(--color-gray-100)',
+                color: tab === 'received' ? '#fff' : 'var(--color-gray-700)',
+                borderRadius: 'var(--radius-lg)',
+                fontWeight: 700,
+                fontSize: 14,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                transition: 'all 0.2s'
+              }}
+            >
+              <span>📥 Received Recoveries</span>
+              <span style={{
+                background: tab === 'received' ? 'rgba(255,255,255,0.25)' : 'var(--color-gray-200)',
+                padding: '2px 8px', borderRadius: 12, fontSize: 11
+              }}>
+                {received.length}
+              </span>
+            </button>
 
             <button
               onClick={fetchData}
               disabled={loading}
               style={{
-                background: 'none',
+                padding: '10px 14px',
                 border: '1px solid var(--color-gray-300)',
-                borderRadius: 'var(--radius-md)',
-                padding: '6px 14px',
-                fontSize: 12.5,
+                background: '#fff',
+                color: 'var(--color-gray-700)',
+                borderRadius: 'var(--radius-lg)',
                 fontWeight: 600,
-                color: 'var(--color-gray-600)',
+                fontSize: 13,
                 cursor: 'pointer',
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
                 gap: 6
               }}
@@ -715,126 +570,100 @@ const MyRecoveries = () => {
             </button>
           </div>
 
-          {/* Search, Filter Pills, and Sort Bar */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 12
-          }}>
-            {/* Status Filter Pills */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-gray-400)', textTransform: 'uppercase', marginRight: 4 }}>
-                Status:
-              </span>
-              {['ALL', 'PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'CANCELLED'].map(st => (
-                <button
-                  key={st}
-                  onClick={() => setFilter(st)}
-                  style={{
-                    padding: '5px 12px',
-                    borderRadius: 999,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    border: 'none',
-                    cursor: 'pointer',
-                    background: filter === st ? 'var(--color-gray-900)' : 'var(--color-gray-100)',
-                    color: filter === st ? '#fff' : 'var(--color-gray-600)',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  {st.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
-
-            {/* Right side: Search & Sort */}
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-              {/* Search box */}
-              <div style={{ position: 'relative' }}>
-                <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-gray-400)', fontSize: 13 }}>
-                  🔍
-                </span>
-                <input
-                  type="text"
-                  placeholder="Search item, ID, location..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  style={{
-                    padding: '7px 12px 7px 30px',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--color-gray-300)',
-                    fontSize: 12.5,
-                    outline: 'none',
-                    width: 210,
-                    background: 'var(--color-gray-50)',
-                  }}
-                />
-                {search && (
-                  <button
-                    onClick={() => setSearch('')}
-                    style={{
-                      position: 'absolute',
-                      right: 8,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--color-gray-400)',
-                      cursor: 'pointer',
-                      fontSize: 12
-                    }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-
-              {/* Sort dropdown */}
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value)}
+          {/* Filter dropdown, search & sort matching Claims controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {/* Search field */}
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="Search recoveries..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
                 style={{
-                  padding: '7px 12px',
+                  padding: '8px 12px 8px 30px',
                   borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--color-gray-300)',
                   background: '#fff',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  color: 'var(--color-gray-700)',
-                  cursor: 'pointer',
-                  outline: 'none'
+                  fontSize: 13,
+                  color: 'var(--color-gray-800)',
+                  outline: 'none',
+                  width: 175
                 }}
-              >
-                <option value="newest">Newest First</option>
-                <option value="oldest">Oldest First</option>
-                <option value="updated">Recently Updated</option>
-              </select>
-
-              {/* Clear filters button */}
-              {hasActiveFilters && (
+              />
+              <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', fontSize: 12, opacity: 0.5 }}>🔍</span>
+              {search && (
                 <button
-                  onClick={clearFilters}
-                  style={{
-                    padding: '7px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px dashed var(--color-gray-300)',
-                    background: '#fff',
-                    color: 'var(--color-gray-600)',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                >
-                  Clear Filters
-                </button>
+                  onClick={() => setSearch('')}
+                  style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#999' }}
+                >✕</button>
               )}
             </div>
+
+            {/* Status filter dropdown */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-gray-500)', textTransform: 'uppercase' }}>Filter:</span>
+              <select
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-gray-300)',
+                  background: '#fff',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--color-gray-800)'
+                }}
+              >
+                <option value="ALL">All Statuses</option>
+                <option value="PENDING">Pending Review</option>
+                <option value="UNDER_REVIEW">Under Review</option>
+                <option value="APPROVED">Approved</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="CANCELLED">Cancelled</option>
+              </select>
+            </div>
+
+            {/* Sort dropdown */}
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--color-gray-300)',
+                background: '#fff',
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--color-gray-800)'
+              }}
+            >
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="updated">Recently Updated</option>
+            </select>
+
+            {hasActiveFilters && (
+              <button
+                onClick={clearFilters}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px dashed var(--color-gray-300)',
+                  background: '#fff',
+                  color: 'var(--color-gray-600)',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Clear
+              </button>
+            )}
           </div>
         </div>
 
-        {/* ── 4. Main Content Area ────────────────────────────────────────── */}
+        {/* ── 4. Main Cards Grid / Empty States ───────────────────────────── */}
         {error ? (
           <div style={{
             background: '#FEF2F2',
@@ -864,10 +693,9 @@ const MyRecoveries = () => {
             </button>
           </div>
         ) : loading ? (
-          /* Skeleton Loading Cards */
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
             gap: 'var(--space-6)'
           }}>
             {[1, 2, 3].map(i => (
@@ -876,102 +704,43 @@ const MyRecoveries = () => {
                 style={{
                   background: '#fff',
                   borderRadius: 'var(--radius-2xl)',
-                  border: '1px solid var(--color-gray-200)',
-                  overflow: 'hidden',
-                  padding: 16
+                  padding: 20
                 }}
               >
-                <Skeleton height={150} style={{ borderRadius: 12, marginBottom: 16 }} />
-                <Skeleton height={20} width="65%" style={{ marginBottom: 10 }} />
-                <Skeleton height={14} width="40%" style={{ marginBottom: 16 }} />
-                <Skeleton height={60} style={{ borderRadius: 8, marginBottom: 16 }} />
-                <Skeleton height={38} style={{ borderRadius: 8 }} />
+                <Skeleton height={140} style={{ borderRadius: 12, marginBottom: 16 }} />
+                <Skeleton height={18} width="70%" style={{ marginBottom: 8 }} />
+                <Skeleton height={14} width="40%" />
               </div>
             ))}
           </div>
         ) : filteredList.length === 0 ? (
-          /* Empty States */
-          <div style={{
-            background: '#fff',
-            borderRadius: 'var(--radius-2xl)',
-            border: '1px solid var(--color-gray-200)',
-            boxShadow: 'var(--shadow-sm)'
-          }}>
-            {hasActiveFilters ? (
-              <EmptyState
-                icon="🔍"
-                title="No Matching Recoveries"
-                description={`No recovery records match your search "${search}" with status "${filter}". Try adjusting or clearing your filters.`}
-                action={
-                  <button
-                    onClick={clearFilters}
-                    style={{
-                      padding: '10px 22px',
-                      background: 'var(--color-gray-900)',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 'var(--radius-lg)',
-                      fontWeight: 700,
-                      fontSize: 13.5,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Clear All Filters
-                  </button>
-                }
-              />
-            ) : tab === 'submissions' ? (
-              <EmptyState
-                icon="🎁"
-                title="No Recovery Submissions Yet"
-                description="Have you found an item that someone lost? Browse open lost item reports and submit a recovery to help reunite owners with their belongings."
-                action={
-                  <Link
-                    to="/lost-items"
-                    style={{
-                      padding: '10px 24px',
-                      background: 'var(--color-primary)',
-                      color: '#fff',
-                      borderRadius: 'var(--radius-lg)',
-                      fontWeight: 700,
-                      fontSize: 14,
-                      textDecoration: 'none',
-                      boxShadow: '0 4px 12px rgba(67, 97, 238, 0.25)',
-                      display: 'inline-block'
-                    }}
-                  >
-                    Browse Lost Items →
-                  </Link>
-                }
-              />
-            ) : (
-              <EmptyState
-                icon="📬"
-                title="No Incoming Recoveries Yet"
-                description="When community finders discover items matching your lost reports, their submitted recovery records will appear here for verification and handover."
-                action={
-                  <Link
-                    to="/report/lost"
-                    style={{
-                      padding: '10px 24px',
-                      background: '#059669',
-                      color: '#fff',
-                      borderRadius: 'var(--radius-lg)',
-                      fontWeight: 700,
-                      fontSize: 14,
-                      textDecoration: 'none',
-                      boxShadow: '0 4px 12px rgba(5, 150, 105, 0.25)',
-                      display: 'inline-block'
-                    }}
-                  >
-                    Report a Lost Item →
-                  </Link>
-                }
-              />
-            )}
-          </div>
+          <EmptyState
+            icon={tab === 'submissions' ? '🎁' : '📥'}
+            title={tab === 'submissions' ? 'No submitted recoveries found' : 'No recoveries received yet'}
+            description={tab === 'submissions'
+              ? (filter !== 'ALL' ? `No recoveries with status '${filter}'.` : "You haven't submitted any item recovery reports yet. You can submit a recovery from open Lost Items reports.")
+              : 'When someone finds and reports an item matching your lost reports, it will appear here for verification.'}
+            action={
+              hasActiveFilters ? (
+                <button
+                  onClick={clearFilters}
+                  style={{
+                    padding: '9px 20px',
+                    background: 'var(--color-primary)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 'var(--radius-lg)',
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Clear Filters
+                </button>
+              ) : null
+            }
+          />
         ) : (
-          /* Recovery Cards Grid */
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',

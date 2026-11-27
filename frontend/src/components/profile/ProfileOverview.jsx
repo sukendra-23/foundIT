@@ -70,43 +70,22 @@ const ProfileOverview = ({ user, onUpdate, onNavigate, toast }) => {
 
       {/* ── Hero Card ─────────────────────────────────────────────── */}
       <div className="profile-section-card">
-        <div style={{ padding: 'var(--space-6)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexWrap: 'wrap' }}>
+        <div className="profile-hero-card">
+          {/* Hidden file input for device/gallery upload */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={(e) => handleUploadFile(e.target.files?.[0])}
+            accept="image/*"
+            style={{ display: 'none' }}
+          />
 
-            {/* Hidden file input for device/gallery upload */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={(e) => handleUploadFile(e.target.files?.[0])}
-              accept="image/*"
-              style={{ display: 'none' }}
-            />
-
+          <div className="profile-hero-main">
             {/* Clickable Avatar that ENLARGES on click */}
             <div
+              className="profile-avatar-wrap"
               onClick={() => setEnlargeModalOpen(true)}
               title="Click to view enlarged profile photo"
-              style={{
-                position: 'relative',
-                width: 84,
-                height: 84,
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, var(--color-primary), #7C3AED)',
-                color: '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 34,
-                fontWeight: 800,
-                boxShadow: '0 6px 20px rgba(67,97,238,0.3)',
-                flexShrink: 0,
-                cursor: 'pointer',
-                overflow: 'hidden',
-                border: '3px solid #fff',
-                transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.05)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; }}
             >
               {user.avatar_url ? (
                 <img
@@ -119,56 +98,32 @@ const ProfileOverview = ({ user, onUpdate, onNavigate, toast }) => {
               )}
 
               {/* Hover Enlarge badge overlay */}
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'rgba(0,0,0,0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  opacity: 0,
-                  transition: 'opacity 0.2s',
-                  fontSize: 22,
-                  color: '#fff',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.opacity = 1; }}
-                onMouseLeave={e => { e.currentTarget.style.opacity = 0; }}
-              >
+              <div className="profile-avatar-zoom-overlay">
                 🔍
               </div>
             </div>
 
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-                <h2 style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 800, color: 'var(--color-gray-900)' }}>
+            <div className="profile-hero-details">
+              <div className="profile-name-row">
+                <h2 className="profile-hero-name">
                   {user.name}
                 </h2>
                 <button
                   type="button"
+                  className="profile-change-photo-btn"
                   onClick={() => fileInputRef.current?.click()}
-                  style={{
-                    fontSize: 'var(--font-size-xs)',
-                    color: 'var(--color-primary)',
-                    background: 'var(--color-primary-light)',
-                    border: '1px solid var(--color-primary-muted)',
-                    borderRadius: 'var(--radius-full)',
-                    padding: '3px 10px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
                   title="Upload a new profile picture from your device"
                 >
                   📷 Change Photo
                 </button>
               </div>
 
-              <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-gray-500)', marginBottom: 10 }}>
+              <p className="profile-hero-email">
                 {user.email}
               </p>
 
               {/* Badges — clickable */}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="profile-hero-badges">
                 <span className="status-pill active">✅ Active Account</span>
 
                 {user.email_verified ? (
@@ -192,20 +147,13 @@ const ProfileOverview = ({ user, onUpdate, onNavigate, toast }) => {
                 )}
               </div>
             </div>
+          </div>
 
+          <div className="profile-hero-actions">
             <button
+              type="button"
+              className="profile-edit-btn"
               onClick={() => onNavigate('personal')}
-              style={{
-                padding: '10px 20px',
-                background: 'var(--color-primary)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 'var(--radius-lg)',
-                fontWeight: 'var(--font-semibold)',
-                fontSize: 'var(--font-size-sm)',
-                cursor: 'pointer',
-                flexShrink: 0,
-              }}
             >
               ✏️ Edit Profile
             </button>
@@ -213,7 +161,7 @@ const ProfileOverview = ({ user, onUpdate, onNavigate, toast }) => {
         </div>
 
         {/* ── Info rows ─────────────────────────────────────────── */}
-        <div style={{ borderTop: '1px solid var(--color-gray-100)', padding: '0 var(--space-6)' }}>
+        <div className="profile-info-list">
           {[
             { label: 'Full Name',     value: user.name },
             { label: 'Email Address', value: user.email },
@@ -229,7 +177,7 @@ const ProfileOverview = ({ user, onUpdate, onNavigate, toast }) => {
         </div>
       </div>
 
-      {/* ── Quick Actions (View & Upload Photo removed as requested) ─────────── */}
+      {/* ── Quick Actions ───────────────────────────────────────────────────── */}
       <div className="profile-section-card">
         <div className="psc-head">
           <div className="psc-head-icon">⚡</div>
@@ -257,7 +205,7 @@ const ProfileOverview = ({ user, onUpdate, onNavigate, toast }) => {
         </div>
       </div>
 
-      {/* ── Visual Activity & Recovery Analytics (in place of My Activity) ── */}
+      {/* ── Visual Activity & Recovery Analytics ────────────────────────────── */}
       <UserActivityAnalytics />
     </>
   );

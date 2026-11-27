@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { messageApi } from '../../services/messageApi';
 import NotificationBell from '../common/NotificationBell';
@@ -12,20 +12,19 @@ const Logo = () => (
   </Link>
 );
 
-const NavLinks = ({ onClose }) => {
+const DesktopNavLinks = () => {
   const handleHowItWorks = (e) => {
     if (window.location.pathname === '/') {
       e.preventDefault();
       document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' });
     }
-    if (onClose) onClose();
   };
 
   return (
     <nav className="navbar-links">
-      <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={onClose}>Home</NavLink>
-      <NavLink to="/lost-items" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={onClose}>Lost Items</NavLink>
-      <NavLink to="/found-items" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'} onClick={onClose}>Found Items</NavLink>
+      <NavLink to="/" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Home</NavLink>
+      <NavLink to="/lost-items" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Lost Items</NavLink>
+      <NavLink to="/found-items" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Found Items</NavLink>
       <Link to="/#how-it-works" className="nav-link" onClick={handleHowItWorks}>How It Works</Link>
     </nav>
   );
@@ -34,6 +33,7 @@ const NavLinks = ({ onClose }) => {
 const Navbar = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -54,7 +54,7 @@ const Navbar = () => {
     }
 
     const fetchUnread = async () => {
-      if (document.hidden) return; // Skip polling when tab is hidden
+      if (document.hidden) return;
       try {
         const res = await messageApi.getUnreadCount();
         setUnreadCount(res.data.unreadCount || 0);
@@ -68,15 +68,27 @@ const Navbar = () => {
     return () => clearInterval(interval);
   }, [user]);
 
-  // Close dropdown on outside click
+  // Close dropdown on outside click or escape key
   useEffect(() => {
     const handler = (e) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
         setDropdownOpen(false);
       }
     };
+    const keyHandler = (e) => {
+      if (e.key === 'Escape') {
+        setDropdownOpen(false);
+        setMobileOpen(false);
+      }
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    document.addEventListener('keydown', keyHandler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+      document.removeEventListener('keydown', keyHandler);
+    };
   }, []);
 
   // Lock body scroll when mobile menu is open
@@ -96,187 +108,225 @@ const Navbar = () => {
     navigate('/');
   };
 
+  const handleHowItWorksMobile = (e) => {
+    setMobileOpen(false);
+    if (window.location.pathname === '/') {
+      e.preventDefault();
+      document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <>
       <header className={`navbar ${scrolled ? 'scrolled' : ''}`}>
         <div className="navbar-inner container">
           <Logo />
 
-          {/* Desktop nav — hidden on mobile via hidden-mobile */}
-          <div className="navbar-desktop hidden-mobile">
-            <NavLinks />
-            <div className="navbar-auth">
-              {user ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Link
-                    to="/messages"
-                    className="nav-message-btn"
-                    title="In-App Messages"
-                    style={{
-                      position: 'relative',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: 36,
-                      height: 36,
-                      borderRadius: '50%',
-                      background: 'var(--color-gray-100)',
-                      color: 'var(--color-gray-700)',
-                      textDecoration: 'none',
-                      fontSize: 17,
-                      transition: 'background 0.2s',
-                    }}
-                  >
-                    💬
-                    {unreadCount > 0 && (
-                      <span style={{
-                        position: 'absolute',
-                        top: -3,
-                        right: -3,
-                        background: '#EF4444',
-                        color: '#fff',
-                        fontSize: 10,
-                        fontWeight: 800,
-                        minWidth: 18,
-                        height: 18,
-                        borderRadius: 9,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '0 4px',
-                        boxShadow: '0 0 0 2px #fff'
-                      }}>
-                        {unreadCount > 99 ? '99+' : unreadCount}
-                      </span>
-                    )}
-                  </Link>
-
-                  {/* In-App Notification Bell */}
-                  <NotificationBell />
-
-                  <div className="user-menu" ref={dropdownRef}>
-                    <button
-                      className="user-avatar-btn"
-                      onClick={() => setDropdownOpen(o => !o)}
-                      aria-expanded={dropdownOpen}
-                    >
-                      <div className="user-avatar" style={{ overflow: 'hidden' }}>
-                        {user.avatar_url ? (
-                          <img src={user.avatar_url} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        ) : (
-                          user.name.charAt(0).toUpperCase()
-                        )}
-                      </div>
-                      <span className="user-name hidden-mobile">{user.name.split(' ')[0]}</span>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
-                        <polyline points="6 9 12 15 18 9"/>
-                      </svg>
-                    </button>
-
-                    {dropdownOpen && (
-                      <div className="user-dropdown anim-fade-in-down">
-                        <div className="dropdown-header">
-                          <p className="dropdown-name">{user.name}</p>
-                          <p className="dropdown-email">{user.email}</p>
-                        </div>
-                        <div className="dropdown-divider" />
-                        <Link to="/dashboard" className="dropdown-item" onClick={() => setDropdownOpen(false)}>🏠 Dashboard</Link>
-                        <Link to="/my-reports" className="dropdown-item" onClick={() => setDropdownOpen(false)}>📋 My Reports</Link>
-                        <Link to="/matches" className="dropdown-item" onClick={() => setDropdownOpen(false)}>✨ My Matches</Link>
-                        <Link to="/claims" className="dropdown-item" onClick={() => setDropdownOpen(false)}>🏷️ My Claims</Link>
-                        <Link to="/my-recoveries" className="dropdown-item" onClick={() => setDropdownOpen(false)}>🎁 My Recoveries</Link>
-                        <Link to="/messages" className="dropdown-item" onClick={() => setDropdownOpen(false)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>💬 Messages</span>
-                          {unreadCount > 0 && (
-                            <span style={{ background: '#EF4444', color: '#fff', fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 999 }}>
-                              {unreadCount}
-                            </span>
-                          )}
-                        </Link>
-                        {user.role === 'ADMIN' && (
-                          <Link to="/admin" className="dropdown-item" onClick={() => setDropdownOpen(false)} style={{ color: '#7C3AED', fontWeight: 700 }}>
-                            🛡️ Admin Portal
-                          </Link>
-                        )}
-                        <Link to="/profile" className="dropdown-item" onClick={() => setDropdownOpen(false)}>👤 Profile</Link>
-                        <div className="dropdown-divider" />
-                        <button className="dropdown-item danger" onClick={handleLogout}>🚪 Log Out</button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="auth-buttons">
-                  <Link to="/login" className="btn-ghost-nav">Log In</Link>
-                  <Link to="/register" className="btn-primary-nav">Get Started</Link>
-                </div>
-              )}
-            </div>
+          {/* Desktop nav links only (Home, Lost Items, Found Items, How It Works) */}
+          <div className="navbar-desktop-links hidden-mobile">
+            <DesktopNavLinks />
           </div>
 
-          {/* Mobile hamburger */}
-          <button
-            className={`hamburger hidden-desktop ${mobileOpen ? 'open' : ''}`}
-            onClick={() => setMobileOpen(o => !o)}
-            aria-label="Toggle menu"
-          >
-            <span /><span /><span />
-          </button>
+          {/* Right-side Navbar Actions */}
+          <div className="navbar-actions">
+            {user ? (
+              <>
+                {/* 1. Messages Action Icon */}
+                <NavLink
+                  to="/messages"
+                  className={({ isActive }) => `nav-action-btn ${isActive ? 'active' : ''}`}
+                  title="In-App Messages"
+                  aria-label="Messages"
+                >
+                  <span className="nav-action-icon">💬</span>
+                  {unreadCount > 0 && (
+                    <span className="nav-badge">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </NavLink>
+
+                {/* 2. Notifications Bell Action Icon */}
+                <NotificationBell />
+
+                {/* 3. User Profile Icon & Account Dropdown */}
+                <div className="user-menu" ref={dropdownRef}>
+                  <button
+                    className="user-avatar-btn"
+                    onClick={() => setDropdownOpen(o => !o)}
+                    aria-expanded={dropdownOpen}
+                    aria-label="Account menu"
+                    title="Account Menu"
+                  >
+                    <div className="user-avatar">
+                      {user.avatar_url ? (
+                        <img src={user.avatar_url} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        user.name?.charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <span className="user-name hidden-mobile">{user.name?.split(' ')[0]}</span>
+                    <svg className="user-chevron hidden-mobile" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </button>
+
+                  {dropdownOpen && (
+                    <div className="user-dropdown anim-fade-in-down">
+                      <div className="dropdown-header">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div className="user-avatar" style={{ width: 36, height: 36, flexShrink: 0 }}>
+                            {user.avatar_url ? (
+                              <img src={user.avatar_url} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              user.name?.charAt(0).toUpperCase()
+                            )}
+                          </div>
+                          <div style={{ overflow: 'hidden' }}>
+                            <p className="dropdown-name">{user.name}</p>
+                            <p className="dropdown-email">{user.email}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="dropdown-divider" />
+                      {/* Account Options ONLY: Dashboard, My Reports, My Matches, My Claims, My Recoveries, Profile */}
+                      <NavLink
+                        to="/dashboard"
+                        className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        🏠 Dashboard
+                      </NavLink>
+                      <NavLink
+                        to="/my-reports"
+                        className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        📋 My Reports
+                      </NavLink>
+                      <NavLink
+                        to="/matches"
+                        className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        ✨ My Matches
+                      </NavLink>
+                      <NavLink
+                        to="/claims"
+                        className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        🏷️ My Claims
+                      </NavLink>
+                      <NavLink
+                        to="/my-recoveries"
+                        className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        🎁 My Recoveries
+                      </NavLink>
+                      {user.role === 'ADMIN' && (
+                        <NavLink
+                          to="/admin"
+                          className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                          onClick={() => setDropdownOpen(false)}
+                          style={{ color: '#7C3AED', fontWeight: 700 }}
+                        >
+                          🛡️ Admin Portal
+                        </NavLink>
+                      )}
+                      <NavLink
+                        to="/profile"
+                        className={({ isActive }) => `dropdown-item ${isActive ? 'active' : ''}`}
+                        onClick={() => setDropdownOpen(false)}
+                      >
+                        👤 Profile
+                      </NavLink>
+                      <div className="dropdown-divider" />
+                      <button className="dropdown-item danger" onClick={handleLogout}>🚪 Log Out</button>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="auth-buttons hidden-mobile">
+                <Link to="/login" className="btn-ghost-nav">Log In</Link>
+                <Link to="/register" className="btn-primary-nav">Get Started</Link>
+              </div>
+            )}
+
+            {/* 4. Hamburger Icon (Visible on Mobile only) */}
+            <button
+              className={`hamburger hidden-desktop ${mobileOpen ? 'open' : ''}`}
+              onClick={() => setMobileOpen(o => !o)}
+              aria-label="Toggle public navigation"
+              aria-expanded={mobileOpen}
+            >
+              <span /><span /><span />
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Mobile Menu */}
+      {/* Mobile Navigation Drawer — Public website navigation ONLY */}
       {mobileOpen && (
-        <div className="mobile-menu anim-fade-in-down hidden-desktop">
-          <NavLinks onClose={() => setMobileOpen(false)} />
-          <div className="mobile-menu-divider" />
-          {user ? (
-            <div className="mobile-auth">
-              <div className="mobile-user-info">
-                <div className="user-avatar" style={{ overflow: 'hidden' }}>
-                  {user.avatar_url ? (
-                    <img src={user.avatar_url} alt={user.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    user.name.charAt(0).toUpperCase()
-                  )}
-                </div>
-                <div>
-                  <p style={{ fontWeight: 600, color: 'var(--color-gray-900)' }}>{user.name}</p>
-                  <p style={{ fontSize: 12, color: 'var(--color-gray-500)' }}>{user.email}</p>
-                </div>
-              </div>
-              <Link to="/dashboard" className="mobile-link" onClick={() => setMobileOpen(false)}>Dashboard</Link>
-              <Link to="/my-reports" className="mobile-link" onClick={() => setMobileOpen(false)}>My Reports</Link>
-              <Link to="/matches" className="mobile-link" onClick={() => setMobileOpen(false)}>My Matches</Link>
-              <Link to="/claims" className="mobile-link" onClick={() => setMobileOpen(false)}>My Claims</Link>
-              <Link to="/my-recoveries" className="mobile-link" onClick={() => setMobileOpen(false)}>My Recoveries</Link>
-              <Link to="/messages" className="mobile-link" onClick={() => setMobileOpen(false)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Messages</span>
-                {unreadCount > 0 && (
-                  <span style={{ background: '#EF4444', color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 999 }}>
-                    {unreadCount} new
-                  </span>
-                )}
+        <div className="mobile-drawer-overlay hidden-desktop" onClick={() => setMobileOpen(false)}>
+          <div className="mobile-drawer-content anim-fade-in-down" onClick={e => e.stopPropagation()}>
+            <div className="mobile-drawer-header">
+              <span className="mobile-drawer-title">Navigation</span>
+              <button
+                className="mobile-drawer-close"
+                onClick={() => setMobileOpen(false)}
+                aria-label="Close menu"
+              >
+                ✕
+              </button>
+            </div>
+
+            <nav className="mobile-drawer-nav">
+              <NavLink
+                to="/"
+                end
+                className={({ isActive }) => `mobile-drawer-link ${isActive ? 'active' : ''}`}
+                onClick={() => setMobileOpen(false)}
+              >
+                Home
+              </NavLink>
+              <NavLink
+                to="/lost-items"
+                className={({ isActive }) => `mobile-drawer-link ${isActive ? 'active' : ''}`}
+                onClick={() => setMobileOpen(false)}
+              >
+                Lost Items
+              </NavLink>
+              <NavLink
+                to="/found-items"
+                className={({ isActive }) => `mobile-drawer-link ${isActive ? 'active' : ''}`}
+                onClick={() => setMobileOpen(false)}
+              >
+                Found Items
+              </NavLink>
+              <Link
+                to="/#how-it-works"
+                className="mobile-drawer-link"
+                onClick={handleHowItWorksMobile}
+              >
+                How It Works
               </Link>
-              {/* Notification Bell in mobile menu */}
-              <div style={{ padding: '4px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 14, color: 'var(--color-gray-500)', fontWeight: 500 }}>Notifications</span>
-                <NotificationBell />
-              </div>
-              {user.role === 'ADMIN' && (
-                <Link to="/admin" className="mobile-link" onClick={() => setMobileOpen(false)} style={{ color: '#7C3AED', fontWeight: 700 }}>
-                  Admin Portal
+            </nav>
+
+            {!user && (
+              <div className="mobile-drawer-auth">
+                <div className="mobile-drawer-divider" />
+                <Link to="/login" className="mobile-drawer-link" onClick={() => setMobileOpen(false)}>
+                  Log In
                 </Link>
-              )}
-              <Link to="/profile" className="mobile-link" onClick={() => setMobileOpen(false)}>Profile</Link>
-              <button className="mobile-link danger" onClick={handleLogout}>Log Out</button>
-            </div>
-          ) : (
-            <div className="mobile-auth">
-              <Link to="/login" className="mobile-link" onClick={() => setMobileOpen(false)}>Log In</Link>
-              <Link to="/register" className="mobile-btn-primary" onClick={() => setMobileOpen(false)}>Get Started →</Link>
-            </div>
-          )}
+                <Link to="/register" className="mobile-btn-primary" onClick={() => setMobileOpen(false)}>
+                  Get Started →
+                </Link>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </>
