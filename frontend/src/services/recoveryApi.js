@@ -19,6 +19,8 @@ export const recoveryApi = {
     // Owner: List recoveries submitted on lost items reported by current user
     getReceived: () =>
         api.get('/recoveries/received'),
+    getReceivedRecoveries: () =>
+        api.get('/recoveries/received'),
 
     // View single recovery report detail
     getById: (id) =>

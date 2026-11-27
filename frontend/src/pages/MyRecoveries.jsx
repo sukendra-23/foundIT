@@ -7,6 +7,7 @@ import EmptyState from '../components/common/EmptyState';
 import { Skeleton } from '../components/common/Loader';
 import { recoveryApi } from '../services/recoveryApi';
 import { formatDate } from '../utils/formatters';
+import './MyRecoveries.css';
 
 const STATUS_CONFIG = {
   PENDING: {
@@ -341,15 +342,19 @@ const MyRecoveries = () => {
     setLoading(true);
     setError(null);
     try {
+      const getRecFn = recoveryApi.getReceivedRecoveries || recoveryApi.getReceived;
       const [subRes, recRes] = await Promise.all([
         recoveryApi.getMySubmissions(),
-        recoveryApi.getReceivedRecoveries()
+        getRecFn()
       ]);
-      setSubmissions(subRes.data.data || []);
-      setReceived(recRes.data.data || []);
+      const subData = Array.isArray(subRes?.data) ? subRes.data : (subRes?.data?.data || []);
+      const recData = Array.isArray(recRes?.data) ? recRes.data : (recRes?.data?.data || []);
+      setSubmissions(subData);
+      setReceived(recData);
     } catch (err) {
       console.error('Failed to load recoveries:', err);
-      setError('Unable to load your recovery submissions. Please try again.');
+      const serverMsg = err?.response?.data?.message;
+      setError(serverMsg || 'Unable to load your recovery submissions. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -447,7 +452,7 @@ const MyRecoveries = () => {
         }}>
           <MetricCard
             title={tab === 'submissions' ? 'Total Submissions' : 'Total Received'}
-            count={metrics.total}
+            count={error && !rawList.length ? '—' : metrics.total}
             icon="📦"
             subtitle={tab === 'submissions' ? 'Reports you submitted' : 'Incoming matches'}
             color="#2563EB"
@@ -456,7 +461,7 @@ const MyRecoveries = () => {
           />
           <MetricCard
             title="Pending Review"
-            count={metrics.pending}
+            count={error && !rawList.length ? '—' : metrics.pending}
             icon="⏳"
             subtitle="Awaiting verification"
             color="#D97706"
@@ -465,7 +470,7 @@ const MyRecoveries = () => {
           />
           <MetricCard
             title="Approved"
-            count={metrics.approved}
+            count={error && !rawList.length ? '—' : metrics.approved}
             icon="🎉"
             subtitle="Chat & handover open"
             color="#059669"
@@ -474,7 +479,7 @@ const MyRecoveries = () => {
           />
           <MetricCard
             title="Rejected / Cancelled"
-            count={metrics.closed}
+            count={error && !rawList.length ? '—' : metrics.closed}
             icon="↩️"
             subtitle="Resolved submissions"
             color="#64748B"
@@ -483,137 +488,62 @@ const MyRecoveries = () => {
           />
         </div>
 
-        {/* ── 3. Tabs & Filter Row (Matches MyClaims tab presentation) ─────── */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 16,
-          marginBottom: 'var(--space-6)',
-          borderBottom: '1px solid var(--color-gray-200)',
-          paddingBottom: 12
-        }}>
-          {/* Tab buttons */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        {/* ── 3. Recovery Controls Section (Responsive 3-row layout) ───────── */}
+        <div className="recovery-controls-section">
+          {/* Row 1: My Submissions and Received Recoveries Tabs (Side-by-side) */}
+          <div className="recovery-tabs-row">
             <button
               onClick={() => { setTab('submissions'); setFilter('ALL'); }}
-              style={{
-                padding: '10px 20px',
-                border: 'none',
-                background: tab === 'submissions' ? 'var(--color-primary)' : 'var(--color-gray-100)',
-                color: tab === 'submissions' ? '#fff' : 'var(--color-gray-700)',
-                borderRadius: 'var(--radius-lg)',
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                transition: 'all 0.2s'
-              }}
+              className={`recovery-tab-btn ${tab === 'submissions' ? 'active' : 'inactive'}`}
+              type="button"
             >
               <span>🎁 My Submissions</span>
-              <span style={{
-                background: tab === 'submissions' ? 'rgba(255,255,255,0.25)' : 'var(--color-gray-200)',
-                padding: '2px 8px', borderRadius: 12, fontSize: 11
-              }}>
-                {submissions.length}
+              <span className="recovery-tab-badge">
+                {error && !submissions.length ? '—' : submissions.length}
               </span>
             </button>
 
             <button
               onClick={() => { setTab('received'); setFilter('ALL'); }}
-              style={{
-                padding: '10px 20px',
-                border: 'none',
-                background: tab === 'received' ? 'var(--color-primary)' : 'var(--color-gray-100)',
-                color: tab === 'received' ? '#fff' : 'var(--color-gray-700)',
-                borderRadius: 'var(--radius-lg)',
-                fontWeight: 700,
-                fontSize: 14,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                transition: 'all 0.2s'
-              }}
+              className={`recovery-tab-btn ${tab === 'received' ? 'active' : 'inactive'}`}
+              type="button"
             >
               <span>📥 Received Recoveries</span>
-              <span style={{
-                background: tab === 'received' ? 'rgba(255,255,255,0.25)' : 'var(--color-gray-200)',
-                padding: '2px 8px', borderRadius: 12, fontSize: 11
-              }}>
-                {received.length}
+              <span className="recovery-tab-badge">
+                {error && !received.length ? '—' : received.length}
               </span>
-            </button>
-
-            <button
-              onClick={fetchData}
-              disabled={loading}
-              style={{
-                padding: '10px 14px',
-                border: '1px solid var(--color-gray-300)',
-                background: '#fff',
-                color: 'var(--color-gray-700)',
-                borderRadius: 'var(--radius-lg)',
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6
-              }}
-            >
-              <span className={loading ? 'anim-spin' : ''}>🔄</span>
-              <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
             </button>
           </div>
 
-          {/* Filter dropdown, search & sort matching Claims controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {/* Search field */}
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                placeholder="Search recoveries..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                style={{
-                  padding: '8px 12px 8px 30px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--color-gray-300)',
-                  background: '#fff',
-                  fontSize: 13,
-                  color: 'var(--color-gray-800)',
-                  outline: 'none',
-                  width: 175
-                }}
-              />
-              <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', fontSize: 12, opacity: 0.5 }}>🔍</span>
-              {search && (
-                <button
-                  onClick={() => setSearch('')}
-                  style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#999' }}
-                >✕</button>
-              )}
-            </div>
+          {/* Row 2: Search field immediately below tabs (Full available width on mobile) */}
+          <div className="recovery-search-row">
+            <span className="recovery-search-icon">🔍</span>
+            <input
+              type="text"
+              placeholder="Search recoveries..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="recovery-search-input"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="recovery-search-clear"
+                type="button"
+                aria-label="Clear search"
+              >✕</button>
+            )}
+          </div>
 
+          {/* Row 3: Filter, Sort, Refresh Controls Below Search */}
+          <div className="recovery-filters-row">
             {/* Status filter dropdown */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-gray-500)', textTransform: 'uppercase' }}>Filter:</span>
+            <div className="recovery-filter-select-wrapper">
+              <span className="recovery-filter-label">Filter:</span>
               <select
                 value={filter}
                 onChange={e => setFilter(e.target.value)}
-                style={{
-                  padding: '8px 14px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--color-gray-300)',
-                  background: '#fff',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: 'var(--color-gray-800)'
-                }}
+                className="recovery-select"
               >
                 <option value="ALL">All Statuses</option>
                 <option value="PENDING">Pending Review</option>
@@ -625,37 +555,35 @@ const MyRecoveries = () => {
             </div>
 
             {/* Sort dropdown */}
-            <select
-              value={sortBy}
-              onChange={e => setSortBy(e.target.value)}
-              style={{
-                padding: '8px 12px',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--color-gray-300)',
-                background: '#fff',
-                fontSize: 13,
-                fontWeight: 600,
-                color: 'var(--color-gray-800)'
-              }}
+            <div className="recovery-sort-wrapper">
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="recovery-select recovery-sort-select"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="updated">Recently Updated</option>
+              </select>
+            </div>
+
+            {/* Refresh action */}
+            <button
+              onClick={fetchData}
+              disabled={loading}
+              className="recovery-refresh-btn"
+              type="button"
+              title="Refresh recoveries"
             >
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
-              <option value="updated">Recently Updated</option>
-            </select>
+              <span className={loading ? 'anim-spin' : ''}>🔄</span>
+              <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
+            </button>
 
             {hasActiveFilters && (
               <button
                 onClick={clearFilters}
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px dashed var(--color-gray-300)',
-                  background: '#fff',
-                  color: 'var(--color-gray-600)',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
+                className="recovery-clear-btn"
+                type="button"
               >
                 Clear
               </button>

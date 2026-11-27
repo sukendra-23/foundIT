@@ -1,0 +1,365 @@
+/* ==========================================================================
+   FoundIT — My Recoveries & Handover Responsive Styles
+   Supports mobile (320px, 360px, 375px, 390px, 414px, 430px),
+   tablets (720px, 768px), and desktops (1024px, 1440px).
+   ========================================================================== */
+
+/* ── Container for Controls ── */
+.recovery-controls-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: var(--space-6);
+  border-bottom: 1px solid var(--color-gray-200);
+  padding-bottom: 16px;
+  width: 100%;
+}
+
+/* ── Part 1: Row 1 — My Submissions and Received Recoveries Tabs ── */
+.recovery-tabs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.recovery-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 10px;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-weight: 700;
+  font-size: 13.5px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 42px;
+  box-sizing: border-box;
+  text-align: center;
+  user-select: none;
+}
+
+.recovery-tab-btn.active {
+  background: var(--color-primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28);
+}
+
+.recovery-tab-btn.inactive {
+  background: var(--color-gray-100);
+  color: var(--color-gray-700);
+}
+
+.recovery-tab-btn.inactive:hover {
+  background: var(--color-gray-200);
+}
+
+.recovery-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.recovery-tab-btn.active .recovery-tab-badge {
+  background: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
+}
+
+.recovery-tab-btn.inactive .recovery-tab-badge {
+  background: var(--color-gray-200);
+  color: var(--color-gray-700);
+}
+
+/* ── Part 2: Row 2 — Search Field Below Tabs ── */
+.recovery-search-row {
+  width: 100%;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.recovery-search-input {
+  width: 100%;
+  height: 42px;
+  padding: 8px 36px 8px 36px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-300);
+  background: #ffffff;
+  font-size: 14px;
+  color: var(--color-gray-900);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.recovery-search-input::placeholder {
+  color: var(--color-gray-400);
+}
+
+.recovery-search-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.recovery-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.recovery-search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--color-gray-400);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.recovery-search-clear:hover {
+  color: var(--color-gray-700);
+}
+
+/* ── Part 3: Row 3 — Filter and Sort Controls Below Search ── */
+.recovery-filters-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.recovery-filter-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 140px;
+  min-width: 130px;
+}
+
+.recovery-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.recovery-select {
+  height: 38px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-gray-300);
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-gray-800);
+  outline: none;
+  width: 100%;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.recovery-select:focus {
+  border-color: var(--color-primary);
+}
+
+.recovery-sort-wrapper {
+  flex: 1 1 140px;
+  min-width: 130px;
+}
+
+.recovery-refresh-btn {
+  height: 38px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-gray-300);
+  background: #ffffff;
+  color: var(--color-gray-700);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.recovery-refresh-btn:hover:not(:disabled) {
+  background: var(--color-gray-50);
+  border-color: var(--color-gray-400);
+}
+
+.recovery-refresh-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.recovery-clear-btn {
+  height: 38px;
+  padding: 6px 12px;
+  border: 1px dashed var(--color-gray-300);
+  background: #ffffff;
+  color: var(--color-gray-600);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.recovery-clear-btn:hover {
+  background: var(--color-gray-50);
+  color: var(--color-gray-800);
+  border-color: var(--color-gray-400);
+}
+
+/* ── Desktop & Tablet (min-width: 768px) ── */
+@media (min-width: 768px) {
+  .recovery-controls-section {
+    gap: 16px;
+  }
+
+  .recovery-tabs-row {
+    display: inline-flex;
+    width: auto;
+    gap: 12px;
+  }
+
+  .recovery-tab-btn {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+
+  .recovery-search-row {
+    max-width: 440px;
+  }
+
+  .recovery-filters-row {
+    flex-wrap: nowrap;
+    width: auto;
+  }
+
+  .recovery-filter-select-wrapper {
+    flex: 0 0 auto;
+    min-width: 170px;
+  }
+
+  .recovery-sort-wrapper {
+    flex: 0 0 auto;
+    min-width: 160px;
+  }
+
+  .recovery-refresh-btn {
+    flex: 0 0 auto;
+  }
+
+  .recovery-clear-btn {
+    flex: 0 0 auto;
+  }
+}
+
+/* ── Mobile Screens (max-width: 640px) ── */
+@media (max-width: 640px) {
+  .recovery-controls-section {
+    gap: 12px;
+  }
+
+  .recovery-tabs-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .recovery-tab-btn {
+    font-size: 13px;
+    padding: 9px 8px;
+    gap: 5px;
+  }
+
+  .recovery-filters-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .recovery-filter-select-wrapper {
+    grid-column: span 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .recovery-sort-wrapper {
+    grid-column: span 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .recovery-refresh-btn {
+    grid-column: span 1;
+    width: 100%;
+  }
+
+  .recovery-clear-btn {
+    grid-column: span 1;
+    width: 100%;
+  }
+}
+
+/* ── Small Mobile Screens (max-width: 380px, e.g. 360px, 320px) ── */
+@media (max-width: 380px) {
+  .recovery-tab-btn {
+    font-size: 11.5px;
+    padding: 8px 4px;
+    gap: 4px;
+  }
+
+  .recovery-tab-badge {
+    padding: 1px 5px;
+    font-size: 10px;
+  }
+
+  .recovery-select {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
+  .recovery-refresh-btn {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
+  .recovery-filter-label {
+    display: none;
+  }
+}
