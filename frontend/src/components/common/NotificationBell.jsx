@@ -89,15 +89,26 @@ const NotificationBell = () => {
         if (next) fetchNotifications();
     };
 
-    // ── Outside-click to close ────────────────────────────────────────────
+    // ── Outside-click to close (supporting mouse and touch) ────────────────
     useEffect(() => {
         const handler = (e) => {
             if (panelRef.current && !panelRef.current.contains(e.target)) {
                 setOpen(false);
             }
         };
+        const keyHandler = (e) => {
+            if (e.key === 'Escape') {
+                setOpen(false);
+            }
+        };
         document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        document.addEventListener('touchstart', handler);
+        document.addEventListener('keydown', keyHandler);
+        return () => {
+            document.removeEventListener('mousedown', handler);
+            document.removeEventListener('touchstart', handler);
+            document.removeEventListener('keydown', keyHandler);
+        };
     }, []);
 
     // ── Mark all read ─────────────────────────────────────────────────────
@@ -131,77 +142,27 @@ const NotificationBell = () => {
         }
     };
 
-    // ── Styles ────────────────────────────────────────────────────────────
-    const btnStyle = {
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 36,
-        height: 36,
-        borderRadius: '50%',
-        background: 'var(--color-gray-100)',
-        color: 'var(--color-gray-700)',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: 17,
-        transition: 'background 0.2s',
-        flexShrink: 0,
-    };
-
-    const badgeStyle = {
-        position: 'absolute',
-        top: -3,
-        right: -3,
-        background: '#EF4444',
-        color: '#fff',
-        fontSize: 10,
-        fontWeight: 800,
-        minWidth: 18,
-        height: 18,
-        borderRadius: 9,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0 4px',
-        boxShadow: '0 0 0 2px #fff',
-    };
-
-    const panelStyle = {
-        position: 'absolute',
-        top: 'calc(100% + 8px)',
-        right: 0,
-        width: 360,
-        maxHeight: 420,
-        overflowY: 'auto',
-        background: '#fff',
-        borderRadius: 12,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-        zIndex: 9999,
-        border: '1px solid #E2E8F0',
-    };
-
     return (
         <div ref={panelRef} style={{ position: 'relative', display: 'inline-flex' }}>
             {/* Bell Button */}
             <button
                 onClick={handleBellClick}
-                style={btnStyle}
+                className="nav-action-btn"
                 title="Notifications"
                 aria-label="Open notifications"
                 aria-expanded={open}
             >
                 🔔
                 {unreadCount > 0 && (
-                    <span style={badgeStyle}>
+                    <span className="nav-badge">
                         {unreadCount > 99 ? '99+' : unreadCount}
                     </span>
                 )}
             </button>
 
-            {/* Dropdown Panel */}
+            {/* Dropdown Panel — Styled via responsive CSS class to never be cut off */}
             {open && (
-                <div style={panelStyle}>
+                <div className="notification-dropdown-panel anim-fade-in-down">
                     {/* Panel Header */}
                     <div style={{
                         display: 'flex',
@@ -212,13 +173,14 @@ const NotificationBell = () => {
                         position: 'sticky',
                         top: 0,
                         background: '#fff',
-                        zIndex: 1,
+                        zIndex: 2,
                     }}>
-                        <span style={{ fontWeight: 700, fontSize: 15, color: '#0F172A' }}>
-                            Notifications
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontWeight: 800, fontSize: 15, color: '#0F172A' }}>
+                                Notifications
+                            </span>
                             {unreadCount > 0 && (
                                 <span style={{
-                                    marginLeft: 8,
                                     background: '#EEF2FF',
                                     color: '#4361EE',
                                     fontSize: 11,
@@ -229,23 +191,45 @@ const NotificationBell = () => {
                                     {unreadCount} new
                                 </span>
                             )}
-                        </span>
-                        {unreadCount > 0 && (
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            {unreadCount > 0 && (
+                                <button
+                                    onClick={handleMarkAllRead}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: '#4361EE',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        padding: '2px 6px',
+                                    }}
+                                >
+                                    Mark all read
+                                </button>
+                            )}
                             <button
-                                onClick={handleMarkAllRead}
+                                onClick={() => setOpen(false)}
                                 style={{
-                                    background: 'none',
+                                    background: 'var(--color-gray-100)',
                                     border: 'none',
-                                    color: '#4361EE',
+                                    borderRadius: '50%',
+                                    width: 26,
+                                    height: 26,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
                                     fontSize: 12,
-                                    fontWeight: 600,
+                                    color: 'var(--color-gray-600)',
                                     cursor: 'pointer',
-                                    padding: '2px 6px',
                                 }}
+                                aria-label="Close notifications"
                             >
-                                Mark all read
+                                ✕
                             </button>
-                        )}
+                        </div>
                     </div>
 
                     {/* Body */}
@@ -262,7 +246,8 @@ const NotificationBell = () => {
                             color: '#94A3B8',
                         }}>
                             <div style={{ fontSize: 32, marginBottom: 8 }}>🔔</div>
-                            <p style={{ margin: 0, fontSize: 14 }}>No notifications yet</p>
+                            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#64748B' }}>No notifications yet</p>
+                            <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94A3B8' }}>Updates on your reports and claims will appear here.</p>
                         </div>
                     ) : (
                         notifications.map((notif) => (
@@ -271,7 +256,7 @@ const NotificationBell = () => {
                                 onClick={() => handleNotificationClick(notif)}
                                 style={{
                                     display: 'flex',
-                                    gap: 10,
+                                    gap: 12,
                                     padding: '12px 16px',
                                     cursor: notif.link ? 'pointer' : 'default',
                                     background: notif.is_read ? '#fff' : '#F0F4FF',
@@ -300,13 +285,11 @@ const NotificationBell = () => {
                                 {/* Content */}
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{
-                                        fontWeight: notif.is_read ? 500 : 700,
+                                        fontWeight: notif.is_read ? 600 : 700,
                                         fontSize: 13,
                                         color: '#0F172A',
                                         marginBottom: 2,
-                                        whiteSpace: 'nowrap',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
+                                        wordBreak: 'break-word',
                                     }}>
                                         {notif.title}
                                     </div>
@@ -315,10 +298,7 @@ const NotificationBell = () => {
                                             fontSize: 12,
                                             color: '#64748B',
                                             lineHeight: 1.45,
-                                            display: '-webkit-box',
-                                            WebkitLineClamp: 2,
-                                            WebkitBoxOrient: 'vertical',
-                                            overflow: 'hidden',
+                                            wordBreak: 'break-word',
                                         }}>
                                             {notif.body}
                                         </div>
