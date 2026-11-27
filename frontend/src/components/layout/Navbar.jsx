@@ -102,8 +102,8 @@ const Navbar = () => {
         <div className="navbar-inner container">
           <Logo />
 
-          {/* Desktop nav */}
-          <div className="navbar-desktop">
+          {/* Desktop nav — hidden on mobile via hidden-mobile */}
+          <div className="navbar-desktop hidden-mobile">
             <NavLinks />
             <div className="navbar-auth">
               {user ? (
